@@ -3,6 +3,7 @@
  */
 
 import { APP_VERSION } from '../frontend/data/constants/app-version'
+import { createCesExternalSymbolAdapter } from './adapters/ces-web/external-symbol-adapter'
 import { createEditorAcceleratorAdapter } from './adapters/editor/accelerator-adapter'
 import { createEditorAIAdapter } from './adapters/editor/ai-adapter'
 import { createEditorCompilerAdapter } from './adapters/editor/compiler-adapter'
@@ -24,8 +25,10 @@ import { createEditorSystemAdapter } from './adapters/editor/system-adapter'
 import { createEditorThemeAdapter } from './adapters/editor/theme-adapter'
 import { createEditorVersionControlAdapter } from './adapters/editor/version-control-adapter'
 import { createEditorWindowAdapter } from './adapters/editor/window-adapter'
-import { EDITOR_CAPABILITIES } from './shared/ports/platform-capabilities'
+import { EDITOR_CAPABILITIES, WEB_CAPABILITIES } from './shared/ports/platform-capabilities'
 import type { PlatformPorts } from './shared/providers/types'
+
+const isCesWeb = typeof window !== 'undefined' && window.__OPENPLC_CES_WEB__ === true
 
 /**
  * Runtime connection target — IP address of the OpenPLC runtime device.
@@ -84,15 +87,38 @@ export const editorPorts: PlatformPorts = {
   library: createEditorLibraryAdapter(),
   stlibSource: createEditorStlibSourceAdapter(),
   // Paired with `requiresEdgeAccount: false` in EDITOR_CAPABILITIES, so signing in stays optional here.
-  edgeAccount: editorEdgeAccountPort,
+  edgeAccount: isCesWeb ? undefined : editorEdgeAccountPort,
   // Wired unconditionally; visibility is gated by capabilities/consent/sign-in, not by the port's absence.
-  ai: createEditorAIAdapter({
+  ai: isCesWeb ? undefined : createEditorAIAdapter({
     // No build-time kill switch: the main process is the only route to AI endpoints, so an absent proxy already fails closed.
     isFeatureEnabled: true,
     hasUserConsented: hasAiConsent(),
     inlineCompletionsEnabled: readInlineCompletionsPreference(),
   }),
-  capabilities: { ...EDITOR_CAPABILITIES, isDevMode: process.env.NODE_ENV === 'development' },
+  externalSymbols: isCesWeb ? createCesExternalSymbolAdapter() : undefined,
+  capabilities: isCesWeb
+    ? {
+        ...WEB_CAPABILITIES,
+        hasAuthentication: false,
+        hasEdgeAccount: false,
+        requiresEdgeAccount: false,
+        hasOrchestratorDevices: false,
+        hasWebRTC: false,
+        hasInProcessSimulator: false,
+        hasProjectExport: false,
+        hasProjectImport: false,
+        hasVersionControl: false,
+        hasBranchMerge: false,
+        hasPythonLSP: false,
+        hasStLSP: false,
+        hasAIAssistant: false,
+        hasProxiedRuntimeConnection: false,
+        hasDirectProgramUpload: false,
+        hasPackageManager: false,
+        hasEthercat: false,
+        isDevMode: process.env.NODE_ENV === 'development',
+      }
+    : { ...EDITOR_CAPABILITIES, isDevMode: process.env.NODE_ENV === 'development' },
 }
 
 // Same localStorage key the shared consent modal writes; unreadable reads as "not accepted".

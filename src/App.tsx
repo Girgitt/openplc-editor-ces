@@ -22,6 +22,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import pyrightWorkerUrl from 'browser-basedpyright/dist/pyright.worker.js?url'
 import { useCallback, useEffect, useRef } from 'react'
 
+import { CesLivePreviewAgent } from './ces-web/live-preview'
+import { CesSessionBootstrap } from './ces-web/session-bootstrap'
 import { AIChatPanel } from './frontend/components/_features/[workspace]/ai-chat'
 import { AcuExhaustionModal } from './frontend/components/_features/[workspace]/ai-settings-panel'
 import { setPythonLspWorkerUrl } from './frontend/components/_features/[workspace]/editor/monaco/python-lsp'
@@ -77,12 +79,16 @@ editorPorts.library.onLibrariesChanged(() => hydrateLibraries())
 // A provider sign-in finishes in the system browser and lands in the main
 // process; this is how the account hook hears about it without waiting for
 // the window to regain focus. Outside React for the same reason as above.
-listenForProviderSignIns()
+if (editorPorts.capabilities.hasEdgeAccount) {
+  listenForProviderSignIns()
+}
 
 // Fetch the VPP catalog once, now, so a build can tell the user a newer
 // package exists without waiting on the network to find out. Nothing awaits
 // this and nothing reports its failure: offline simply means no such notice.
-void packageUpdateNotifier.prime()
+if (editorPorts.capabilities.hasPackageManager) {
+  void packageUpdateNotifier.prime()
+}
 
 // Register the basedpyright worker URL so the Monaco-side adapter
 // can spin up the Python LSP on first POU open.  No service
@@ -224,6 +230,8 @@ export default function App() {
 
   return (
     <PlatformProvider ports={editorPorts}>
+      <CesSessionBootstrap />
+      <CesLivePreviewAgent />
       <AiBillingNotice />
       {/* Without this provider `useChatPanel()` answers null and the chat button opens nothing. */}
       <ExtensionPanelProvider panels={{ ChatPanel: EditorChatPanel }}>

@@ -7,10 +7,12 @@ import type { CellContext, RowData } from '@tanstack/react-table'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { PLCVariable } from '../../../../middleware/shared/ports/types'
+import { useExternalSymbols } from '../../../hooks/use-external-symbols'
 import { pinSelectors, remoteDeviceSelectors, vendorIoSelectors } from '../../../hooks/use-store-selectors'
 import { useOpenPLCStore } from '../../../store'
 import { ProjectResponse } from '../../../store/slices/project'
 import { cn } from '../../../utils/cn'
+import { buildExternalSymbolOptionGroups } from '../../../utils/external-symbol-options'
 import { isLegalIdentifier, sanitizeVariableInput } from '../../../utils/keywords'
 import { buildLocationDropdownOptions } from '../../../utils/location-dropdown-options'
 import {
@@ -460,6 +462,7 @@ const EditableLocationCell = ({
   const [cellValue, setCellValue] = useState(initialValue)
   // const [isEditing, setIsEditing] = useState(false)
   const [variable, setVariable] = useState<PLCVariable | undefined>(undefined)
+  const externalSymbols = useExternalSymbols(variable?.type.value)
 
   const isCellEditable = () => {
     if (isDebuggerVisible) return false
@@ -488,7 +491,8 @@ const EditableLocationCell = ({
     isLocationCell &&
     locationValue.length > 0 &&
     !isLiteralLocation(locationValue) &&
-    !aliasRegistry.byAlias.has(locationValue)
+    !aliasRegistry.byAlias.has(locationValue) &&
+    !externalSymbols.some((symbol) => symbol.binding === locationValue)
   // Manual-location conflict: a literal `%addr` that collides with an alias a
   // variable elsewhere is bound to. IEC located addresses are GLOBAL, so the
   // conflicting variable can live in any POU or the global scope — the scan
@@ -542,8 +546,8 @@ const EditableLocationCell = ({
         remoteIOPoints,
         vendorIoEntries,
         capabilities,
-      }),
-    [id, existingPins, remoteIOPoints, vendorIoEntries, capabilities],
+      }).concat(buildExternalSymbolOptionGroups(id, externalSymbols)),
+    [id, existingPins, remoteIOPoints, vendorIoEntries, capabilities, externalSymbols],
   )
 
   // Single-field display: `location` is shown verbatim — the alias name when

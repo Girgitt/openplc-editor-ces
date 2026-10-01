@@ -23,17 +23,19 @@ import webpackPaths from './webpack.paths'
 checkNodeEnv('production')
 deleteSourceMaps()
 
+const isCesWebBuild = process.env.CES_WEB_BUILD === 'true'
+
 const configuration: webpack.Configuration = {
   devtool: 'source-map',
 
   mode: 'production',
 
-  target: ['web', 'electron-renderer'],
+  target: isCesWebBuild ? 'web' : ['web', 'electron-renderer'],
 
-  entry: [join(webpackPaths.srcPath, 'main.tsx')],
+  entry: [join(webpackPaths.srcPath, isCesWebBuild ? 'ces-web/main.tsx' : 'main.tsx')],
 
   output: {
-    path: webpackPaths.distRendererPath,
+    path: isCesWebBuild ? join(webpackPaths.distPath, 'ces-web') : webpackPaths.distRendererPath,
     publicPath: './',
     filename: 'renderer.js',
     library: {
@@ -163,7 +165,7 @@ const configuration: webpack.Configuration = {
         removeAttributeQuotes: true,
         removeComments: true,
       },
-      isBrowser: false,
+      isBrowser: isCesWebBuild,
       isDevelopment: false,
     }),
 

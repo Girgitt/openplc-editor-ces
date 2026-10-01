@@ -136,3 +136,7 @@ export function useLibrary() {
 export function useStlibSource() {
   return usePlatform().stlibSource
 }
+
+export function useExternalSymbolsPort() {
+  return usePlatform().externalSymbols
+}

@@ -5,6 +5,7 @@ import type { DebuggerPort } from '../ports/debugger-port'
 import type { DevicePort } from '../ports/device-port'
 import type { EdgeAccountPort } from '../ports/edge-account-port'
 import type { EsiPort } from '../ports/esi-port'
+import type { ExternalSymbolPort } from '../ports/external-symbol-port'
 import type { LibraryPort } from '../ports/library-port'
 import type { NavigationPort } from '../ports/navigation-port'
 import type { OrchestratorPort } from '../ports/orchestrator-port'
@@ -42,4 +43,6 @@ export interface PlatformPorts {
   edgeAccount?: EdgeAccountPort
   // Required when `capabilities.hasStLSP` is true.
   stlibSource?: StlibSourcePort
+  // Optional host-provided logical-signal catalog (CES integration).
+  externalSymbols?: ExternalSymbolPort
 }
