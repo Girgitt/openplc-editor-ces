@@ -25,6 +25,14 @@ export function getCesSessionToken(): string {
   return captureTokenFromFragment() || window.sessionStorage.getItem(TOKEN_KEY) || ''
 }
 
+export function resolveCesApiPath(path: string): string {
+  // Keep API requests relative to the document directory. Standalone CES-web is
+  // served at `/`, while embedded CES sessions are served under a session proxy
+  // prefix such as `/api/v1/.../proxy/`. A relative `api/...` path works in both
+  // cases without teaching the editor anything about CES routing.
+  return path.replace(/^\/+/, '')
+}
+
 export async function cesApi<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = getCesSessionToken()
   const headers = new Headers(init.headers)
@@ -34,7 +42,7 @@ export async function cesApi<T>(path: string, init: RequestInit = {}): Promise<T
   }
   if (token) headers.set('x-ces-editor-token', token)
 
-  const response = await fetch(path, { ...init, headers })
+  const response = await fetch(resolveCesApiPath(path), { ...init, headers })
   const body = (await response.json().catch(() => ({}))) as T & { error?: string }
   if (!response.ok) throw new Error(body.error ?? `${response.status} ${response.statusText}`)
   return body
