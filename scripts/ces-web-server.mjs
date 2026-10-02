@@ -423,6 +423,7 @@ function parseArgs(argv) {
     projectRoot: null,
     initializeNewProject: false,
     token: '',
+    debug: false,
   }
   for (let i = 0; i < argv.length; i += 1) {
     const key = argv[i]
@@ -433,6 +434,7 @@ function parseArgs(argv) {
     else if (key === '--project' && next) { result.project = next; i += 1 }
     else if (key === '--project-root' && next) { result.projectRoot = next; i += 1 }
     else if (key === '--session-token' && next) { result.token = next; i += 1 }
+    else if (key === '--debug') result.debug = true
     else if (key.startsWith('--initialize-new-project=')) {
       result.initializeNewProject = parseBoolean(key.slice(key.indexOf('=') + 1), '--initialize-new-project')
     } else if (key === '--initialize-new-project') {
@@ -448,6 +450,12 @@ export async function createCesEditorServer(options = {}) {
   const port = options.port ?? DEFAULT_PORT
   const staticRoot = resolve(options.staticDir ?? 'release/app/dist/ces-web')
   const token = options.token ?? ''
+  const debug = options.debug === true
+  const trace = (event, detail = undefined) => {
+    if (!debug) return
+    const suffix = detail === undefined ? '' : ` ${JSON.stringify(detail)}`
+    console.log(`[ces-web][debug] ${event}${suffix}`)
+  }
   const initializeNewProject = parseBoolean(options.initializeNewProject ?? false, 'initializeNewProject')
   const projectRoot = await requireExistingProjectRoot(options.projectRoot ?? null)
   let initialDocument = null
@@ -477,6 +485,11 @@ export async function createCesEditorServer(options = {}) {
     try {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`)
       const path = url.pathname
+      trace('request', {
+        method: req.method ?? '',
+        path,
+        projectId: url.searchParams.get('project_id') ?? undefined,
+      })
 
       if (req.method === 'GET' && path === '/api/health') {
         return json(res, 200, {
@@ -488,15 +501,37 @@ export async function createCesEditorServer(options = {}) {
         })
       }
 
-      if (path.startsWith('/api/') && !requireAuth(req, res)) return
+      if (path.startsWith('/api/')) {
+        const ok = authorized(req)
+        trace('api-auth', { method: req.method ?? '', path, authorized: ok })
+        if (!ok) {
+          requireAuth(req, res)
+          return
+        }
+      }
 
       if (req.method === 'POST' && path === '/api/project/open') {
         const body = await readJson(req)
+        trace('project-open requested', { projectId: body.projectId ?? null })
         const { id, projectPath } = resolveProjectUnderRoot(projectRoot, body.projectId)
+        const beforeState = await pathState(projectPath)
+        trace('project-open resolved', {
+          projectId: id,
+          projectPath,
+          beforeState,
+          initializeNewProject,
+        })
         const root = await ensureOpenPlcProject(projectPath, initializeNewProject, id)
         state.document = await readProjectDirectory(root)
         state.persistence = { kind: 'filesystem', root, projectId: id }
         state.documentRevision += 1
+        trace('project-open loaded', {
+          projectId: id,
+          persistence: state.persistence.kind,
+          revision: state.documentRevision,
+          rendererProjectPath: state.document?.files?.projectPath ?? null,
+          pouFiles: state.document?.files?.pouFiles?.length ?? 0,
+        })
         return json(res, 200, { success: true, projectId: id, revision: state.documentRevision })
       }
 
@@ -512,6 +547,13 @@ export async function createCesEditorServer(options = {}) {
       }
       if (req.method === 'GET' && path === '/api/document/raw') {
         const raw = documentAsRawFiles(state.document)
+        trace('document-raw', {
+          loaded: raw !== null,
+          persistence: state.persistence.kind,
+          revision: state.documentRevision,
+          rendererProjectPath: raw?.data?.projectPath ?? null,
+          pouFiles: raw?.data?.pouFiles?.length ?? 0,
+        })
         if (!raw) return json(res, 404, { success: false, error: { title: 'No document', description: 'No document loaded' } })
         return json(res, 200, raw)
       }
@@ -580,7 +622,10 @@ export async function createCesEditorServer(options = {}) {
       res.writeHead(200, {
         'content-type': MIME[extname(filePath)] ?? 'application/octet-stream',
         'content-length': String(stat.size),
-        'cache-control': extname(filePath) === '.html' ? 'no-store' : 'public, max-age=3600',
+        // CES web assets currently use stable filenames (for example renderer.js).
+        // Do not cache them across rebuilds or the browser can execute an older
+        // renderer against a newer server during development/integration tests.
+        'cache-control': 'no-store',
         'x-content-type-options': 'nosniff',
         'content-security-policy': "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; worker-src 'self' blob:; connect-src 'self'; frame-ancestors 'self'",
       })
@@ -588,7 +633,9 @@ export async function createCesEditorServer(options = {}) {
       createReadStream(filePath).pipe(res)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      json(res, error instanceof HttpError ? error.status : 400, { error: message })
+      const status = error instanceof HttpError ? error.status : 400
+      trace('request-error', { method: req.method ?? '', url: req.url ?? '', status, message })
+      json(res, status, { error: message })
     }
   })
 
@@ -615,6 +662,17 @@ async function main() {
   const address = await instance.listen()
   const actualPort = typeof address === 'object' && address ? address.port : options.port
   console.log(`OpenPLC Editor CES web server listening on http://${options.host}:${actualPort}`)
+  if (options.debug) {
+    console.log('[ces-web][debug] request tracing enabled (authentication tokens are never logged)')
+    const staticRoot = resolve(options.staticDir)
+    console.log(`[ces-web][debug] static root: ${staticRoot}`)
+    try {
+      const renderer = await fs.stat(join(staticRoot, 'renderer.js'))
+      console.log(`[ces-web][debug] renderer.js: size=${renderer.size} mtime=${renderer.mtime.toISOString()}`)
+    } catch (error) {
+      console.log(`[ces-web][debug] renderer.js stat failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
   if (options.project) console.log(`Loaded project: ${resolve(options.project)}`)
   if (options.projectRoot) console.log(`Standalone project root: ${resolve(options.projectRoot)}`)
   if (options.initializeNewProject) console.log('Missing standalone projects may be initialized on first open')

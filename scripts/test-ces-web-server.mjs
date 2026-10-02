@@ -93,6 +93,17 @@ try {
     assert.equal((await response.json()).active, false)
   })
 
+
+  const staticRoot = join(tempRoot, 'static')
+  await fs.mkdir(staticRoot)
+  await fs.writeFile(join(staticRoot, 'index.html'), '<script src="/renderer.js"></script>')
+  await fs.writeFile(join(staticRoot, 'renderer.js'), 'console.log("test")')
+  await withServer({ staticDir: staticRoot }, async ({ base }) => {
+    const response = await fetch(`${base}/renderer.js`)
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('cache-control'), 'no-store', 'fixed-name CES web assets must not be cached across rebuilds')
+  })
+
   const projectRoot = join(tempRoot, 'projects')
   await fs.mkdir(projectRoot)
 
