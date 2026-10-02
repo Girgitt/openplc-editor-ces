@@ -32,7 +32,7 @@ export function CesSessionBootstrap() {
       }
 
       try {
-        const result = await projectPort.openProjectByPath('ces-session')
+        const result = await projectPort.openProjectByPath('/ces-session')
         if (!cancelled && result.success && result.data) {
           handleOpenProjectResponse(result.data)
           return

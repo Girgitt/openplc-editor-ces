@@ -132,6 +132,7 @@ try {
     response = await call('/api/document/raw')
     assert.equal(response.status, 200)
     const opened = await response.json()
+    assert.equal(opened.data.projectPath, '/ces-session', 'renderer-facing web path must route as a local project')
     const main = opened.data.pouFiles.find((item) => item.relativePath === 'pous/programs/main.st')
     assert.equal(main.content.includes('PROGRAM main'), true)
 
@@ -145,7 +146,7 @@ try {
 
     response = await call('/api/document/save-file', {
       method: 'POST',
-      body: JSON.stringify({ filePath: 'ces-session/pous/programs/main.st', content: 'PROGRAM main\nvalue := 2;\nEND_PROGRAM\n' }),
+      body: JSON.stringify({ filePath: '/ces-session/pous/programs/main.st', content: 'PROGRAM main\nvalue := 2;\nEND_PROGRAM\n' }),
     })
     assert.equal(response.status, 200)
     assert.equal((await fs.readFile(join(empty, 'pous/programs/main.st'), 'utf8')).includes('value := 2'), true)
@@ -203,6 +204,7 @@ try {
     const response = await call('/api/document/raw')
     assert.equal(response.status, 200)
     const raw = await response.json()
+    assert.equal(raw.data.projectPath, '/ces-session')
     assert.equal(raw.data.pouFiles.some((item) => item.relativePath === 'pous/programs/main.st'), true)
   })
 

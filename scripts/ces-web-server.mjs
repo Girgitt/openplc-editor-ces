@@ -10,6 +10,10 @@ const MAX_JSON_BYTES = 16 * 1024 * 1024
 const MAX_SYMBOLS = 100_000
 const MAX_LIVE_VALUES = 100_000
 const PROJECT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+// Renderer project routing treats every non-absolute path as an Autonomy Edge
+// project ID.  Web sessions therefore use an absolute *virtual* local path so
+// open/save operations stay on the CES REST bridge rather than the cloud port.
+const VIRTUAL_PROJECT_PATH = '/ces-session'
 const PROJECT_DIRECTORIES = [
   'devices',
   'pous/functions',
@@ -328,7 +332,7 @@ export async function readProjectDirectory(projectPath) {
   return normalizeFilesDocument({
     documentId: root,
     files: {
-      projectPath: 'ces-session',
+      projectPath: VIRTUAL_PROJECT_PATH,
       projectJson: await readText('project.json', '{}'),
       deviceConfig: await readText('devices/configuration.json', '{}'),
       pinMapping: await readText('devices/pin-mapping.json', '{}'),
@@ -378,7 +382,7 @@ function documentAsRawFiles(document) {
     return {
       success: true,
       data: {
-        projectPath: 'ces-session',
+        projectPath: VIRTUAL_PROJECT_PATH,
         projectJson: '',
         deviceConfig: '{}',
         pinMapping: '{}',
@@ -396,7 +400,7 @@ function documentAsRawFiles(document) {
   return {
     success: true,
     data: {
-      projectPath: 'ces-session',
+      projectPath: VIRTUAL_PROJECT_PATH,
       projectJson: f.projectJson,
       deviceConfig: f.deviceConfig ?? '{}',
       pinMapping: f.pinMapping ?? '{}',
@@ -524,7 +528,7 @@ export async function createCesEditorServer(options = {}) {
           return json(res, 409, { success: false, error: 'Save the full project once before saving individual files.' })
         }
         if (typeof body.filePath !== 'string' || typeof body.content !== 'string') return badRequest(res, 'filePath and content are required')
-        const rel = normalizeRelativePath(body.filePath.replace(/^ces-session\/?/, ''), 'filePath')
+        const rel = normalizeRelativePath(body.filePath.replace(/^\/?ces-session\/?/, ''), 'filePath')
         const buckets = ['pouFiles', 'serverFiles', 'remoteDeviceFiles', 'dataTypeFiles']
         let updated = false
         for (const bucket of buckets) {
