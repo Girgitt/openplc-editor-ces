@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createReadStream, existsSync, promises as fs } from 'node:fs'
 import { createServer } from 'node:http'
-import { extname, join, normalize, resolve, sep } from 'node:path'
+import { basename, dirname, extname, join, normalize, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const DEFAULT_HOST = '127.0.0.1'
@@ -9,6 +9,14 @@ const DEFAULT_PORT = 43821
 const MAX_JSON_BYTES = 16 * 1024 * 1024
 const MAX_SYMBOLS = 100_000
 const MAX_LIVE_VALUES = 100_000
+const PROJECT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+const PROJECT_DIRECTORIES = [
+  'devices',
+  'pous/functions',
+  'pous/function-blocks',
+  'pous/programs',
+  'datatypes',
+]
 
 const MIME = {
   '.css': 'text/css; charset=utf-8',
@@ -21,6 +29,13 @@ const MIME = {
   '.ttf': 'font/ttf',
   '.woff': 'font/woff',
   '.woff2': 'font/woff2',
+}
+
+class HttpError extends Error {
+  constructor(status, message) {
+    super(message)
+    this.status = status
+  }
 }
 
 function json(res, status, body) {
@@ -44,6 +59,19 @@ function normalizeRelativePath(value, label = 'relativePath') {
     throw new Error(`${label} must stay inside the OpenPLC project`)
   }
   return candidate
+}
+
+function normalizeProjectId(value) {
+  if (typeof value !== 'string' || !PROJECT_ID_RE.test(value) || value === '.' || value === '..') {
+    throw new HttpError(400, 'projectId must be a single safe directory name using letters, digits, dot, underscore or dash')
+  }
+  return value
+}
+
+function parseBoolean(value, label) {
+  if (value === true || value === 'true') return true
+  if (value === false || value === 'false') return false
+  throw new Error(`${label} must be true or false`)
 }
 
 async function readJson(req) {
@@ -166,7 +194,97 @@ function normalizeLiveSnapshot(value, knownSymbolIds) {
   }
 }
 
-async function readProjectDirectory(projectPath) {
+async function requireExistingProjectRoot(projectRoot) {
+  if (!projectRoot) return null
+  const root = resolve(projectRoot)
+  let stat
+  try {
+    stat = await fs.stat(root)
+  } catch (error) {
+    if (error?.code === 'ENOENT') throw new Error(`project root does not exist: ${root}`)
+    throw error
+  }
+  if (!stat.isDirectory()) throw new Error(`project root is not a directory: ${root}`)
+  return root
+}
+
+async function pathState(path) {
+  try {
+    const stat = await fs.stat(path)
+    if (!stat.isDirectory()) return 'not-directory'
+    const entries = await fs.readdir(path)
+    return entries.length === 0 ? 'empty-directory' : 'non-empty-directory'
+  } catch (error) {
+    if (error?.code === 'ENOENT') return 'missing'
+    throw error
+  }
+}
+
+function defaultProjectJson(name) {
+  // Mirrors the current default plc-project authored by
+  // backend/shared/project/create-project-files.ts. Keep the server-side
+  // standalone initializer intentionally small and covered by the S1H
+  // contract test so drift is visible when the canonical defaults change.
+  return {
+    meta: { name, type: 'plc-project' },
+    data: {
+      pous: [],
+      dataTypes: [],
+      libraries: [],
+      configuration: {
+        resource: {
+          tasks: [{ name: 'task0', triggering: 'Cyclic', interval: 'T#20ms', priority: 1 }],
+          instances: [{ name: 'instance0', program: 'main', task: 'task0' }],
+          globalVariables: [],
+        },
+      },
+    },
+  }
+}
+
+export async function initializeProjectDirectory(projectPath, projectName = basename(resolve(projectPath))) {
+  const root = resolve(projectPath)
+  await fs.mkdir(root, { recursive: true })
+  for (const relativeDir of PROJECT_DIRECTORIES) await fs.mkdir(join(root, relativeDir), { recursive: true })
+  await fs.writeFile(join(root, 'project.json'), `${JSON.stringify(defaultProjectJson(projectName), null, 2)}\n`, 'utf8')
+  await fs.writeFile(join(root, 'devices/configuration.json'), `${JSON.stringify({
+    deviceBoard: 'OpenPLC Simulator',
+    communicationPort: '',
+    selectedPlatformOptions: {},
+  }, null, 2)}\n`, 'utf8')
+  await fs.writeFile(join(root, 'devices/pin-mapping.json'), '{}\n', 'utf8')
+  await fs.writeFile(join(root, 'pous/programs/main.st'), 'PROGRAM main\n\n\nEND_PROGRAM\n', 'utf8')
+  return root
+}
+
+async function ensureOpenPlcProject(projectPath, initializeNewProject, projectName) {
+  const root = resolve(projectPath)
+  const state = await pathState(root)
+
+  if (state === 'missing') {
+    if (!initializeNewProject) throw new HttpError(404, `OpenPLC project does not exist: ${root}`)
+    await initializeProjectDirectory(root, projectName)
+    return root
+  }
+  if (state === 'not-directory') throw new HttpError(409, `OpenPLC project path is not a directory: ${root}`)
+  if (existsSync(join(root, 'project.json'))) return root
+  if (state === 'empty-directory') {
+    await initializeProjectDirectory(root, projectName)
+    return root
+  }
+  throw new HttpError(409, `${root} is non-empty but is not an OpenPLC project (project.json missing)`)
+}
+
+function resolveProjectUnderRoot(projectRoot, projectId) {
+  if (!projectRoot) throw new HttpError(409, 'project_id cannot be used because no --project-root is configured')
+  const id = normalizeProjectId(projectId)
+  const root = resolve(projectRoot)
+  const projectPath = resolve(root, id)
+  if (dirname(projectPath) !== root) throw new HttpError(400, 'projectId must resolve directly below the configured project root')
+  return { id, projectPath }
+}
+
+export async function readProjectDirectory(projectPath) {
   const root = resolve(projectPath)
   const projectJsonPath = join(root, 'project.json')
   if (!existsSync(projectJsonPath)) throw new Error(`${root} is not an OpenPLC project (project.json missing)`)
@@ -224,6 +342,36 @@ async function readProjectDirectory(projectPath) {
   })
 }
 
+async function writeTextInsideProject(root, relativePath, content) {
+  const rel = normalizeRelativePath(relativePath)
+  const target = resolve(root, rel)
+  if (!(target === root || target.startsWith(`${root}${sep}`))) throw new Error('file path escaped the OpenPLC project')
+  await fs.mkdir(dirname(target), { recursive: true })
+  await fs.writeFile(target, content, 'utf8')
+}
+
+async function writeProjectDirectory(projectPath, document) {
+  if (!document || document.format !== 'openplc-project-files') {
+    throw new HttpError(409, 'filesystem-backed sessions require an OpenPLC project-files document')
+  }
+  const root = resolve(projectPath)
+  const files = document.files
+  await writeTextInsideProject(root, 'project.json', files.projectJson)
+  await writeTextInsideProject(root, 'devices/configuration.json', files.deviceConfig ?? '{}')
+  await writeTextInsideProject(root, 'devices/pin-mapping.json', files.pinMapping ?? '{}')
+  if (files.libraryManifest) await writeTextInsideProject(root, 'library.json', files.libraryManifest)
+
+  for (const bucket of ['pouFiles', 'serverFiles', 'remoteDeviceFiles', 'dataTypeFiles']) {
+    for (const item of files[bucket] ?? []) await writeTextInsideProject(root, item.relativePath, item.content)
+  }
+  for (const relativePath of files.deletions ?? []) {
+    const rel = normalizeRelativePath(relativePath, 'files.deletions')
+    const target = resolve(root, rel)
+    if (!(target === root || target.startsWith(`${root}${sep}`))) throw new Error('deletion path escaped the OpenPLC project')
+    await fs.rm(target, { recursive: true, force: true })
+  }
+}
+
 function documentAsRawFiles(document) {
   if (!document) return null
   if (document.format === 'plcopen-xml') {
@@ -263,7 +411,15 @@ function documentAsRawFiles(document) {
 }
 
 function parseArgs(argv) {
-  const result = { host: DEFAULT_HOST, port: DEFAULT_PORT, staticDir: 'release/app/dist/ces-web', project: null, token: '' }
+  const result = {
+    host: DEFAULT_HOST,
+    port: DEFAULT_PORT,
+    staticDir: 'release/app/dist/ces-web',
+    project: null,
+    projectRoot: null,
+    initializeNewProject: false,
+    token: '',
+  }
   for (let i = 0; i < argv.length; i += 1) {
     const key = argv[i]
     const next = argv[i + 1]
@@ -271,7 +427,14 @@ function parseArgs(argv) {
     else if (key === '--port' && next) { result.port = Number(next); i += 1 }
     else if (key === '--static' && next) { result.staticDir = next; i += 1 }
     else if (key === '--project' && next) { result.project = next; i += 1 }
+    else if (key === '--project-root' && next) { result.projectRoot = next; i += 1 }
     else if (key === '--session-token' && next) { result.token = next; i += 1 }
+    else if (key.startsWith('--initialize-new-project=')) {
+      result.initializeNewProject = parseBoolean(key.slice(key.indexOf('=') + 1), '--initialize-new-project')
+    } else if (key === '--initialize-new-project') {
+      if (next === 'true' || next === 'false') { result.initializeNewProject = parseBoolean(next, key); i += 1 }
+      else result.initializeNewProject = true
+    }
   }
   return result
 }
@@ -281,9 +444,20 @@ export async function createCesEditorServer(options = {}) {
   const port = options.port ?? DEFAULT_PORT
   const staticRoot = resolve(options.staticDir ?? 'release/app/dist/ces-web')
   const token = options.token ?? ''
+  const initializeNewProject = parseBoolean(options.initializeNewProject ?? false, 'initializeNewProject')
+  const projectRoot = await requireExistingProjectRoot(options.projectRoot ?? null)
+  let initialDocument = null
+  let initialPersistence = { kind: 'rest' }
+  if (options.project) {
+    const root = await ensureOpenPlcProject(options.project, initializeNewProject, basename(resolve(options.project)))
+    initialDocument = await readProjectDirectory(root)
+    initialPersistence = { kind: 'filesystem', root, projectId: null }
+  }
+
   const state = {
-    document: options.project ? await readProjectDirectory(options.project) : null,
+    document: initialDocument,
     documentRevision: 0,
+    persistence: initialPersistence,
     symbols: [],
     live: { active: false, revision: 0, values: [] },
   }
@@ -306,13 +480,25 @@ export async function createCesEditorServer(options = {}) {
           service: 'openplc-editor-ces',
           documentLoaded: state.document !== null,
           documentRevision: state.documentRevision,
+          persistence: state.persistence.kind,
         })
       }
 
       if (path.startsWith('/api/') && !requireAuth(req, res)) return
 
+      if (req.method === 'POST' && path === '/api/project/open') {
+        const body = await readJson(req)
+        const { id, projectPath } = resolveProjectUnderRoot(projectRoot, body.projectId)
+        const root = await ensureOpenPlcProject(projectPath, initializeNewProject, id)
+        state.document = await readProjectDirectory(root)
+        state.persistence = { kind: 'filesystem', root, projectId: id }
+        state.documentRevision += 1
+        return json(res, 200, { success: true, projectId: id, revision: state.documentRevision })
+      }
+
       if (req.method === 'POST' && path === '/api/document/load') {
         state.document = normalizeDocument(await readJson(req))
+        state.persistence = { kind: 'rest' }
         state.documentRevision += 1
         return json(res, 200, { success: true, revision: state.documentRevision, document: state.document })
       }
@@ -328,6 +514,7 @@ export async function createCesEditorServer(options = {}) {
       if (req.method === 'POST' && path === '/api/document/save') {
         const body = await readJson(req)
         state.document = normalizeFilesDocument({ documentId: state.document?.documentId ?? 'ces-session', files: body })
+        if (state.persistence.kind === 'filesystem') await writeProjectDirectory(state.persistence.root, state.document)
         state.documentRevision += 1
         return json(res, 200, { success: true, revision: state.documentRevision, document: state.document })
       }
@@ -345,6 +532,7 @@ export async function createCesEditorServer(options = {}) {
           if (item) { item.content = body.content; updated = true; break }
         }
         if (!updated) state.document.files.pouFiles.push({ relativePath: rel, content: body.content })
+        if (state.persistence.kind === 'filesystem') await writeTextInsideProject(state.persistence.root, rel, body.content)
         state.documentRevision += 1
         return json(res, 200, { success: true, revision: state.documentRevision })
       }
@@ -396,7 +584,7 @@ export async function createCesEditorServer(options = {}) {
       createReadStream(filePath).pipe(res)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      badRequest(res, message)
+      json(res, error instanceof HttpError ? error.status : 400, { error: message })
     }
   })
 
@@ -424,6 +612,8 @@ async function main() {
   const actualPort = typeof address === 'object' && address ? address.port : options.port
   console.log(`OpenPLC Editor CES web server listening on http://${options.host}:${actualPort}`)
   if (options.project) console.log(`Loaded project: ${resolve(options.project)}`)
+  if (options.projectRoot) console.log(`Standalone project root: ${resolve(options.projectRoot)}`)
+  if (options.initializeNewProject) console.log('Missing standalone projects may be initialized on first open')
   if (options.token) console.log('Session-token authentication enabled for editor APIs')
 }
 

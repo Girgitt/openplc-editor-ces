@@ -26,6 +26,7 @@ const StartScreen = () => {
   const [openCloudOpen, setOpenCloudOpen] = useState(false)
   // Bumped when the Edge account changes, so the sibling cloud list re-reads.
   const [cloudRevision, setCloudRevision] = useState(0)
+  const [webProjectError, setWebProjectError] = useState('')
   const capabilities = useCapabilities()
   const system = useSystem()
   const projectPort = useProject()
@@ -69,6 +70,15 @@ const StartScreen = () => {
   }
 
   useEffect(() => {
+    const handleWebProjectError = (event: Event) => {
+      const detail = (event as CustomEvent<string>).detail
+      setWebProjectError(typeof detail === 'string' ? detail : '')
+    }
+    window.addEventListener('openplc-ces-project-error', handleWebProjectError)
+    return () => window.removeEventListener('openplc-ces-project-error', handleWebProjectError)
+  }, [])
+
+  useEffect(() => {
     const loadRecent = async () => {
       const recentProjects = await projectPort.getRecentProjects()
       setRecent(recentProjects)
@@ -99,13 +109,15 @@ const StartScreen = () => {
         <div className='flex flex-col items-center gap-6 text-center'>
           <div className='flex flex-col items-center gap-2'>
             <h1 className='text-2xl font-semibold text-neutral-100'>Welcome to OpenPLC Editor</h1>
-            <p className='max-w-md text-neutral-400'>
-              No project is currently loaded. Please provide a project ID in the URL to load a project.
+            <p className='max-w-lg text-neutral-400'>
+              No project is currently loaded. Start with a trusted project path, configure a project root and use a
+              project ID, or load a project document through the REST API.
             </p>
+            {webProjectError && <p className='max-w-lg text-sm text-red-400'>{webProjectError}</p>}
           </div>
           <div className='rounded-lg border border-neutral-800 bg-neutral-900 p-4'>
             <p className='text-sm text-neutral-500'>
-              Example: <code className='text-brand'>?project_id=your-project-id</code>
+              Standalone project-root example: <code className='text-brand'>?project_id=your-project-id</code>
             </p>
           </div>
         </div>
