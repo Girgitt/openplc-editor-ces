@@ -12,7 +12,10 @@ import { pinSelectors, remoteDeviceSelectors, vendorIoSelectors } from '../../..
 import { useOpenPLCStore } from '../../../store'
 import { ProjectResponse } from '../../../store/slices/project'
 import { cn } from '../../../utils/cn'
-import { buildExternalSymbolOptionGroups } from '../../../utils/external-symbol-options'
+import {
+  buildExternalSymbolOptionGroups,
+  externalSymbolLocationPresentation,
+} from '../../../utils/external-symbol-options'
 import { isLegalIdentifier, sanitizeVariableInput } from '../../../utils/keywords'
 import { buildLocationDropdownOptions } from '../../../utils/location-dropdown-options'
 import {
@@ -508,6 +511,7 @@ const EditableLocationCell = ({
       : undefined
   const isManualConflict = locationConflict !== undefined
   const hasLocationWarning = isOrphaned || isManualConflict
+  const locationPresentation = externalSymbolLocationPresentation(cellValue, externalSymbols)
 
   // When the input is blurred, we'll call our table meta's updateData function
   const onBlur = (value: string) => {
@@ -578,11 +582,11 @@ const EditableLocationCell = ({
   // (input/output/inOut/external/temp) variable — an invalid declaration
   // that broke the project on reopen (GitHub issue #904).
   return selected && isEditable() ? (
-    <div className='flex w-full flex-1 items-center gap-1'>
+    <div className='flex w-full flex-1 items-center gap-1' title={locationPresentation.title}>
       {warningGlyph}
       <GenericComboboxCell
         value={cellValue}
-        displayLabel={cellValue}
+        displayLabel={locationPresentation.label}
         onValueChange={(value) => {
           onBlur(value)
         }}
@@ -597,6 +601,7 @@ const EditableLocationCell = ({
     </div>
   ) : (
     <div
+      title={locationPresentation.title}
       className={cn(
         'flex w-full flex-1 items-center justify-center gap-1 bg-transparent p-2 text-center outline-none',
         {
@@ -607,7 +612,7 @@ const EditableLocationCell = ({
     >
       {warningGlyph}
       <HighlightedText
-        text={cellValue}
+        text={locationPresentation.label}
         searchQuery={searchQuery}
         className={cn('h-4 w-full max-w-[400px] overflow-hidden text-ellipsis break-all', {
           'text-amber-600 dark:text-amber-400': hasLocationWarning,

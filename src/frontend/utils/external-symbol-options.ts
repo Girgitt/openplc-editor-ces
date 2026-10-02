@@ -11,6 +11,25 @@ export interface ExternalSymbolOptionGroup {
   options: ExternalSymbolOption[]
 }
 
+export interface ExternalSymbolLocationPresentation {
+  label: string
+  title?: string
+}
+
+export function externalSymbolLocationPresentation(
+  binding: string,
+  symbols: ExternalSymbol[],
+): ExternalSymbolLocationPresentation {
+  const symbol = symbols.find((candidate) => candidate.binding === binding)
+  if (!symbol) return { label: binding }
+
+  const displayName = symbol.displayName || symbol.name
+  return {
+    label: symbol.name || displayName,
+    title: `${displayName}\n${symbol.group} · ${symbol.direction} · ${symbol.type}\nBinding: ${symbol.binding}`,
+  }
+}
+
 export function buildExternalSymbolOptionGroups(
   cellId: string,
   symbols: ExternalSymbol[],
