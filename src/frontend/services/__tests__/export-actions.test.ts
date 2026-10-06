@@ -27,7 +27,7 @@ vi.mock('../../utils/toast', () => ({
   toast: (...args: unknown[]) => mockToast(...args),
 }))
 
-import { executeExportPlcopen } from '../export-actions'
+import { executeExportPlcopen, generatePlcopenXml } from '../export-actions'
 
 function makeProjectData(overrides?: Partial<PLCProjectData>): PLCProjectData {
   return {
@@ -172,4 +172,23 @@ describe('executeExportPlcopen', () => {
     expect(result).toEqual({ success: false })
     expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ variant: 'fail', description: 'boom' }))
   })
+  it('fails closed for SFC until the pinned editor can round-trip it in M5-2B', () => {
+    const projectData = makeProjectData({
+      pous: [
+        {
+          name: 'Sequence',
+          pouType: 'program',
+          body: { language: 'sfc', value: { nodes: [], edges: [] } } as PLCProjectData['pous'][number]['body'],
+          interface: { variables: [] },
+        },
+      ],
+    })
+
+    const result = generatePlcopenXml(projectData)
+
+    expect(result.success).toBe(false)
+    if (!result.success) expect(result.error).toContain('M5-2B')
+    expect(mockXmlGenerator).not.toHaveBeenCalled()
+  })
+
 })

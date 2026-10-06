@@ -43,7 +43,10 @@ export async function cesApi<T>(path: string, init: RequestInit = {}): Promise<T
   if (token) headers.set('x-ces-editor-token', token)
 
   const response = await fetch(resolveCesApiPath(path), { ...init, headers })
-  const body = (await response.json().catch(() => ({}))) as T & { error?: string }
-  if (!response.ok) throw new Error(body.error ?? `${response.status} ${response.statusText}`)
+  const body = (await response.json().catch(() => ({}))) as T & { error?: string; detail?: unknown }
+  if (!response.ok) {
+    const detail = typeof body.detail === 'string' ? body.detail : undefined
+    throw new Error(body.error ?? detail ?? `${response.status} ${response.statusText}`)
+  }
   return body
 }

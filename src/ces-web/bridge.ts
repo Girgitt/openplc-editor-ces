@@ -1,3 +1,5 @@
+import { generatePlcopenXml } from '../frontend/services/export-actions'
+import { openPLCStoreBase } from '../frontend/store'
 import { cesApi } from './api'
 
 type Bridge = Window['bridge']
@@ -17,20 +19,60 @@ function asyncUnsupported(name: string) {
   return Promise.resolve({ success: false, error: `Operation ${name} is unavailable in CES web editor mode.` })
 }
 
+export function isEmbeddedCesEditorSession(): boolean {
+  if (typeof window === 'undefined') return false
+  return /\/editor-sessions\/[^/]+\/proxy\/?$/.test(window.location.pathname)
+}
+
+async function saveCanonicalSnapshot(): Promise<void> {
+  if (!isEmbeddedCesEditorSession()) return
+  const generated = generatePlcopenXml(openPLCStoreBase.getState().project.data)
+  if (!generated.success) throw new Error(generated.error)
+  await cesApi('../canonical-save', {
+    method: 'POST',
+    body: JSON.stringify({ xml: generated.xml }),
+  })
+}
+
+async function saveProjectFiles(files: unknown): Promise<{ success: boolean; error?: string }> {
+  try {
+    if (isEmbeddedCesEditorSession()) {
+      await saveCanonicalSnapshot()
+      return { success: true }
+    }
+    await cesApi('/api/document/save', { method: 'POST', body: JSON.stringify(files) })
+    return { success: true }
+  } catch (error: unknown) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+async function saveSingleFile(filePath: string, content: unknown): Promise<{ success: boolean; error?: string }> {
+  try {
+    if (isEmbeddedCesEditorSession()) {
+      await saveCanonicalSnapshot()
+      return { success: true }
+    }
+    await cesApi('/api/document/save-file', {
+      method: 'POST',
+      body: JSON.stringify({
+        filePath,
+        content: typeof content === 'string' ? content : JSON.stringify(content ?? null, null, 2),
+      }),
+    })
+    return { success: true }
+  } catch (error: unknown) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 export function installCesWebBridge(): void {
   window.__OPENPLC_CES_WEB__ = true
 
   const implementation: Record<string, unknown> = {
     readProjectFiles: async () => cesApi('/api/document/raw'),
-    writeProjectFiles: async (files: unknown) =>
-      cesApi('/api/document/save', { method: 'POST', body: JSON.stringify(files) }).then(() => ({ success: true })),
-    saveFile: async (filePath: string, content: unknown) =>
-      cesApi('/api/document/save-file', { method: 'POST', body: JSON.stringify({
-          filePath,
-          content: typeof content === 'string' ? content : JSON.stringify(content ?? null, null, 2),
-        }) })
-        .then(() => ({ success: true }))
-        .catch((error: unknown) => ({ success: false, error: error instanceof Error ? error.message : String(error) })),
+    writeProjectFiles: saveProjectFiles,
+    saveFile: saveSingleFile,
     retrieveRecent: async () => [],
     getRecent: async () => [],
     removeProjectFromRecent: async () => ({ success: true }),

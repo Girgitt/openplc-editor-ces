@@ -32,7 +32,7 @@ import { toast } from '../utils/toast'
  * narrowing cast below is the same invariant the rest of the codebase
  * relies on, not a new assumption.
  */
-function portToSchemaProjectData(input: PLCProjectData): SchemaPLCProjectData {
+export function portToSchemaProjectData(input: PLCProjectData): SchemaPLCProjectData {
   const pous = input.pous.map((pou) => {
     const variables = pou.interface?.variables ?? []
     const language = pou.body.language as PouLanguage
@@ -92,6 +92,39 @@ function portToSchemaProjectData(input: PLCProjectData): SchemaPLCProjectData {
   } as SchemaPLCProjectData
 }
 
+export type PlcopenGenerationResult =
+  | { success: true; xml: string }
+  | { success: false; error: string }
+
+/**
+ * Generate the safe PLCopen transport used by an embedded CES canonical save.
+ *
+ * The pinned old-editor generator/importer can round-trip ST/LD/FBD today. SFC
+ * is deliberately rejected until M5-2B rather than allowing a save that drops
+ * sequence semantics. The other editor languages are outside the CES v1 IEC
+ * PLCopen authoring profile.
+ */
+export function generatePlcopenXml(projectData: PLCProjectData): PlcopenGenerationResult {
+  const unsupported = projectData.pous.find((pou) => {
+    const language = String(pou.body.language).toLowerCase()
+    return language !== 'st' && language !== 'ld' && language !== 'fbd'
+  })
+  if (unsupported) {
+    const language = String(unsupported.body.language).toUpperCase()
+    const reason =
+      language === 'SFC'
+        ? 'SFC PLCopen round-trip support is scheduled for CES M5-2B.'
+        : `${language} is not supported by the CES M5-2A canonical PLCopen save path.`
+    return { success: false, error: `Cannot save POU "${unsupported.name}": ${reason}` }
+  }
+
+  const xmlResult = XmlGenerator(portToSchemaProjectData(projectData), 'old-editor')
+  if (!xmlResult.ok || !xmlResult.data) {
+    return { success: false, error: xmlResult.message || 'Failed to generate the PLCopen XML.' }
+  }
+  return { success: true, xml: xmlResult.data }
+}
+
 /**
  * Export the currently open project as a PLCopen XML file.
  * Equivalent to File → "Export to PLCOpen XML".
@@ -100,20 +133,19 @@ export async function executeExportPlcopen(projectPort: ProjectPort): Promise<{ 
   const state = openPLCStoreBase.getState()
 
   try {
-    const schemaData = portToSchemaProjectData(state.project.data)
-    const xmlResult = XmlGenerator(schemaData, 'old-editor')
+    const generated = generatePlcopenXml(state.project.data)
 
-    if (!xmlResult.ok || !xmlResult.data) {
+    if (!generated.success) {
       toast({
         title: 'Error exporting PLCopen XML',
-        description: xmlResult.message || 'Failed to generate the PLCopen XML.',
+        description: generated.error,
         variant: 'fail',
       })
       return { success: false }
     }
 
     const fileName = `${state.project.meta.name}.xml`
-    const exportResult = await projectPort.exportPlcopenFile(fileName, xmlResult.data)
+    const exportResult = await projectPort.exportPlcopenFile(fileName, generated.xml)
 
     if (!exportResult.success) {
       toast({
