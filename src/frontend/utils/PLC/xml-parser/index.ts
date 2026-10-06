@@ -37,8 +37,9 @@ export interface PlcopenParseResult {
 // Parses PLCopen TC6-0201 XML into the same project-data shape
 // `XmlGenerator` consumes — the inverse of that pipeline
 // (xml-generator/old-editor/*.ts). Only the `old-editor` dialect shape is
-// handled today: SFC bodies and anything the codesys dialect emits surface
-// as non-fatal warnings rather than being parsed.
+// handled today. SFC bodies are retained as opaque PLCopen payloads because
+// the editor's SFC authoring surface is not implemented yet; unknown dialects
+// still surface as non-fatal warnings.
 export function parsePlcopenXml(xml: string): PlcopenParseResult {
   const project = parseXmlDocument(xml)
   const types = asRecord(project.types)

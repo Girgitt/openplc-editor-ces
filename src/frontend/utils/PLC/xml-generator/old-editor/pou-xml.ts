@@ -6,6 +6,7 @@ import { InterfaceXML } from '@root/middleware/shared/ports/xml-types/old-editor
 import { VariableXML } from '@root/middleware/shared/ports/xml-types/old-editor/variable/variable-diagram'
 
 import { baseTypeTag } from '../base-type-tag'
+import { decodeOpaqueSfcBody } from '../../sfc-opaque'
 import { fbdToXml } from './language/fbd-xml'
 import { ilToXML } from './language/il-xml'
 import { ladderToXml } from './language/ladder-xml'
@@ -158,6 +159,20 @@ export const oldEditorParsePousToXML = (xml: BaseXml, pous: PLCPou[]) => {
           '@pouType': pou.type === 'function-block' ? 'functionBlock' : pou.type,
           interface: interfaceResult,
           body: result.body,
+          documentation: {
+            'xhtml:p': {
+              $: pou.data.documentation === '' ? ' ' : pou.data.documentation,
+            },
+          },
+        })
+        return
+      }
+      case 'sfc': {
+        xml.project.types.pous.pou.push({
+          '@name': pou.data.name,
+          '@pouType': pou.type === 'function-block' ? 'functionBlock' : pou.type,
+          interface: interfaceResult,
+          body: { SFC: decodeOpaqueSfcBody(pou.data.body.value) },
           documentation: {
             'xhtml:p': {
               $: pou.data.documentation === '' ? ' ' : pou.data.documentation,

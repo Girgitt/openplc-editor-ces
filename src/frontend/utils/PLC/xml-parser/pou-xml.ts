@@ -1,5 +1,6 @@
 import type { PLCPou, PLCVariable, PouType, VariableClass } from '../../../../middleware/shared/ports/types'
 import { lookupBaseTypeByXmlElement } from '../../iec-types-registry'
+import { encodeOpaqueSfcBody } from '../sfc-opaque'
 import { parseFbdXml } from './language/fbd-xml'
 import { parseLadderXml } from './language/ladder-xml'
 import { extractXhtmlText, parseDocumentationXml, parseVariableXml } from './variable-xml'
@@ -42,10 +43,10 @@ export function parseInterfaceXml(interfaceXml: unknown): { variables: PLCVariab
   return { variables, returnType: tag !== undefined ? (lookupBaseTypeByXmlElement(tag)?.name ?? tag) : undefined }
 }
 
-// Reverse of `oldEditorParsePousToXML`. ST/IL/LD/FBD bodies all parse in
-// full; SFC and codesys-dialect bodies are surfaced as a non-fatal warning
-// and the POU is skipped — this importer's scope is the old-editor dialect
-// only (see xml-parser/index.ts).
+// Reverse of `oldEditorParsePousToXML`. ST/IL/LD/FBD bodies parse into their
+// normal editor models. SFC is preserved as an opaque PLCopen object because
+// the current SFC editor is still a stub; this keeps load/save lossless without
+// pretending SFC is editable. Other unknown dialects remain non-fatal skips.
 export function parsePousXml(pouXml: unknown): { pous: PLCPou[]; warnings: string[] } {
   const pous: PLCPou[] = []
   const warnings: string[] = []
@@ -110,7 +111,13 @@ export function parsePousXml(pouXml: unknown): { pous: PLCPou[]; warnings: strin
       continue
     }
     if (body.SFC !== undefined) {
-      warnings.push(`POU "${name}": Sequential Function Chart is not supported by the importer, skipped`)
+      pous.push({
+        name,
+        pouType: type,
+        interface: pouInterface,
+        body: { language: 'sfc', value: encodeOpaqueSfcBody(body.SFC) },
+        documentation,
+      })
       continue
     }
     warnings.push(`POU "${name}": no recognized body language found, skipped`)

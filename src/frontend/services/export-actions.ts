@@ -99,23 +99,22 @@ export type PlcopenGenerationResult =
 /**
  * Generate the safe PLCopen transport used by an embedded CES canonical save.
  *
- * The pinned old-editor generator/importer can round-trip ST/LD/FBD today. SFC
- * is deliberately rejected until M5-2B rather than allowing a save that drops
- * sequence semantics. The other editor languages are outside the CES v1 IEC
- * PLCopen authoring profile.
+ * The embedded CES path round-trips ST/LD/FBD and losslessly preserves SFC.
+ * SFC remains non-editable in the current OpenPLC Editor because its graphical
+ * SFC surface is still a stub. Other editor languages are outside the CES v1
+ * IEC PLCopen authoring profile.
  */
 export function generatePlcopenXml(projectData: PLCProjectData): PlcopenGenerationResult {
   const unsupported = projectData.pous.find((pou) => {
     const language = String(pou.body.language).toLowerCase()
-    return language !== 'st' && language !== 'ld' && language !== 'fbd'
+    return language !== 'st' && language !== 'ld' && language !== 'fbd' && language !== 'sfc'
   })
   if (unsupported) {
     const language = String(unsupported.body.language).toUpperCase()
-    const reason =
-      language === 'SFC'
-        ? 'SFC PLCopen round-trip support is scheduled for CES M5-2B.'
-        : `${language} is not supported by the CES M5-2A canonical PLCopen save path.`
-    return { success: false, error: `Cannot save POU "${unsupported.name}": ${reason}` }
+    return {
+      success: false,
+      error: `Cannot save POU "${unsupported.name}": ${language} is not supported by the CES canonical PLCopen save path.`,
+    }
   }
 
   const xmlResult = XmlGenerator(portToSchemaProjectData(projectData), 'old-editor')

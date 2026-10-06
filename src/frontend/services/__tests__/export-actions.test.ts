@@ -172,23 +172,23 @@ describe('executeExportPlcopen', () => {
     expect(result).toEqual({ success: false })
     expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ variant: 'fail', description: 'boom' }))
   })
-  it('fails closed for SFC until the pinned editor can round-trip it in M5-2B', () => {
+  it('allows SFC through the lossless M5-2B PLCopen transport', () => {
     const projectData = makeProjectData({
       pous: [
         {
           name: 'Sequence',
           pouType: 'program',
-          body: { language: 'sfc', value: { nodes: [], edges: [] } } as PLCProjectData['pous'][number]['body'],
+          body: { language: 'sfc', value: '{"format":"openplc-sfc-plcopen-object-v1","body":{}}' },
           interface: { variables: [] },
         },
       ],
     })
+    mockXmlGenerator.mockReturnValue({ ok: true, data: '<project><SFC/></project>' })
 
     const result = generatePlcopenXml(projectData)
 
-    expect(result.success).toBe(false)
-    if (!result.success) expect(result.error).toContain('M5-2B')
-    expect(mockXmlGenerator).not.toHaveBeenCalled()
+    expect(result).toEqual({ success: true, xml: '<project><SFC/></project>' })
+    expect(mockXmlGenerator).toHaveBeenCalledTimes(1)
   })
 
 })

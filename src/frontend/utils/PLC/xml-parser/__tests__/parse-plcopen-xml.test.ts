@@ -1,5 +1,6 @@
 import { XmlGenerator } from '../../../../../backend/shared/utils/PLC/xml-generator'
 import type { PLCProjectData } from '../../../../../middleware/shared/ports/open-plc-types'
+import { decodeOpaqueSfcBody } from '../../sfc-opaque'
 import { parsePlcopenXml } from '../index'
 
 // ---------------------------------------------------------------------------
@@ -496,12 +497,18 @@ describe('parsePlcopenXml — dialect scope', () => {
   </instances>
 </project>`
 
-  it('produces a warning (does not throw) for an SFC body', () => {
-    const result = parsePlcopenXml(baseXml('<SFC/>'))
-    expect(result.projectData.pous).toEqual([])
-    expect(result.warnings).toEqual([
-      'POU "unsupported": Sequential Function Chart is not supported by the importer, skipped',
-    ])
+  it('preserves an SFC body as an opaque PLCopen payload without warning', () => {
+    const result = parsePlcopenXml(
+      baseXml('<SFC><step localId="1" name="Idle" initialStep="true"><position x="0" y="0"/></step></SFC>'),
+    )
+    expect(result.warnings).toEqual([])
+    expect(result.projectData.pous).toHaveLength(1)
+    const pou = result.projectData.pous[0]
+    expect(pou.body.language).toBe('sfc')
+    if (pou.body.language !== 'sfc') throw new Error('expected SFC body')
+    expect(decodeOpaqueSfcBody(pou.body.value)).toEqual({
+      step: { '@localId': '1', '@name': 'Idle', '@initialStep': 'true', position: { '@x': '0', '@y': '0' } },
+    })
   })
 
   it('produces a warning (does not throw) for a body shape outside the old-editor dialect', () => {

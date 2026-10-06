@@ -17,7 +17,7 @@ const pousSchema = z.object({
         ST: stXMLSchema.optional(),
         LD: ladderXMLSchema.optional(),
         FBD: fbdXMLSchema.optional(),
-        SFC: z.string().optional(),
+        SFC: z.unknown().optional(),
       }),
       documentation: z
         .object({

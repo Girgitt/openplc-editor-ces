@@ -2,6 +2,7 @@ import type { PLCPou, PLCVariable } from '@root/middleware/shared/ports/open-plc
 
 import { getBaseOldEditorXmlStructure } from '../base-xml'
 import { oldEditorParseInterface, oldEditorParsePousToXML } from '../pou-xml'
+import { encodeOpaqueSfcBody } from '../../../sfc-opaque'
 
 /** Recursive record type for deeply nested XML structures in test assertions. */
 type XmlNode = Record<string, unknown>
@@ -471,20 +472,22 @@ describe('oldEditorParsePousToXML', () => {
     expect(result.project.types.pous.pou[0]['@pouType']).toBe('function')
   })
 
-  it('skips unknown languages', () => {
+  it('writes an opaque SFC PLCopen body back without interpreting it', () => {
     const xml = makeBaseXml()
+    const sfc = { step: { '@localId': '1', '@name': 'Idle', '@initialStep': 'true' } }
     const pou: PLCPou = {
       type: 'program',
       data: {
-        name: 'unknown',
+        name: 'sequence',
         language: 'sfc',
         variables: [],
-        body: { language: 'sfc', value: '' },
+        body: { language: 'sfc', value: encodeOpaqueSfcBody(sfc) },
         documentation: '',
       },
     }
     const result = oldEditorParsePousToXML(xml, [pou])
-    expect(result.project.types.pous.pou).toHaveLength(0)
+    expect(result.project.types.pous.pou).toHaveLength(1)
+    expect(result.project.types.pous.pou[0].body.SFC).toEqual(sfc)
   })
 
   it('returns the xml object', () => {
