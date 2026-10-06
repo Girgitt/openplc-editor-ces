@@ -7,6 +7,29 @@ type Bridge = Window['bridge']
 const unsubscribe = () => undefined
 const subscription = (_callback?: unknown) => unsubscribe
 
+function saveFileAccelerator(callback: (...args: unknown[]) => void): () => void {
+  const listener = (event: KeyboardEvent) => {
+    if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey || event.key.toLowerCase() !== 's') return
+    // Electron normally owns Ctrl/Cmd+S through the application menu. In the
+    // browser build there is no menu accelerator, so without this explicit
+    // listener the browser handles it as "Save page as...".
+    event.preventDefault()
+    event.stopPropagation()
+    callback()
+  }
+  window.addEventListener('keydown', listener, true)
+  return () => window.removeEventListener('keydown', listener, true)
+}
+
+type BundledLibraryResponse = {
+  archives?: unknown[]
+  installed?: unknown[]
+}
+
+async function bundledLibraries(): Promise<BundledLibraryResponse> {
+  return (await cesApi('/api/context/libraries')) as BundledLibraryResponse
+}
+
 function osName(): 'linux' | 'darwin' | 'win32' | '' {
   const p = navigator.platform.toLowerCase()
   if (p.includes('mac')) return 'darwin'
@@ -94,9 +117,10 @@ export function installCesWebBridge(): void {
     winHandleUpdateTheme: () => undefined,
     handleUpdateTheme: subscription,
     onLibrariesChanged: subscription,
+    saveFileAccelerator,
     onEdgeAccountSignedIn: subscription,
-    loadAllLibraries: async () => [],
-    listInstalledLibraries: async () => [],
+    loadAllLibraries: async () => (await bundledLibraries()).archives ?? [],
+    listInstalledLibraries: async () => (await bundledLibraries()).installed ?? [],
     listInstalledPackages: async () => [],
     verifyInstalledPackageSignatures: async () => [],
     getAvailableBoards: async () => new Map(),

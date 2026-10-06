@@ -6,6 +6,15 @@ import { createCesEditorServer } from './ces-web-server.mjs'
 import { loadProjectViaApi } from './ces-web-load-project.mjs'
 
 const tempRoot = await fs.mkdtemp(join(tmpdir(), 'openplc-ces-web-s1h-'))
+const bundledLibraryDir = join(tempRoot, 'bundled-libs')
+await fs.mkdir(bundledLibraryDir)
+await fs.writeFile(
+  join(bundledLibraryDir, 'iec-standard-fb.stlib'),
+  JSON.stringify({
+    manifest: { name: 'iec-standard-fb', version: '1.0.0', displayName: 'IEC Standard FBs' },
+    pous: [],
+  }),
+)
 
 async function withServer(options, run) {
   const instance = await createCesEditorServer({
@@ -27,7 +36,7 @@ async function withServer(options, run) {
 }
 
 try {
-  await withServer({}, async ({ base, call }) => {
+  await withServer({ bundledLibraryDir }, async ({ base, call }) => {
     let response = await fetch(`${base}/api/health`)
     assert.equal(response.status, 200)
     assert.equal((await response.json()).documentLoaded, false)
@@ -43,6 +52,20 @@ try {
     response = await call('/api/document/raw')
     const raw = await response.json()
     assert.equal(raw.data.pendingPlcopenSource, '<project />')
+
+    response = await call('/api/context/libraries')
+    assert.equal(response.status, 200)
+    const libraries = await response.json()
+    assert.equal(libraries.archives.length, 1)
+    assert.equal(libraries.archives[0].manifest.name, 'iec-standard-fb')
+    assert.deepEqual(libraries.installed[0], {
+      name: 'iec-standard-fb',
+      version: '1.0.0',
+      bundled: true,
+      installedAt: '',
+      origin: 'bundled',
+      displayName: 'IEC Standard FBs',
+    })
 
     response = await call('/api/context/symbols', { method: 'PUT', body: JSON.stringify({ symbols: [
       { id: 'sig:1', name: 'RunFb', displayName: 'Pump / Run feedback', type: 'BOOL', direction: 'input', group: 'Pump P101', binding: 'CES_P101_RUN_FB' },

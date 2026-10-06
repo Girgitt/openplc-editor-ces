@@ -62,4 +62,33 @@ describe('CES embedded editor canonical save bridge', () => {
     expect(mockCesApi).toHaveBeenCalledTimes(1)
     expect(mockCesApi).toHaveBeenCalledWith('/api/document/save', expect.any(Object))
   })
+  it('intercepts Ctrl+S and forwards it to the editor save-file accelerator', () => {
+    window.history.replaceState({}, '', '/api/v1/projects/p/editor-sessions/s/proxy/')
+    installCesWebBridge()
+    const callback = vi.fn()
+    const dispose = window.bridge.saveFileAccelerator(callback)
+
+    const event = new KeyboardEvent('keydown', { key: 's', ctrlKey: true, cancelable: true })
+    window.dispatchEvent(event)
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(callback).toHaveBeenCalledTimes(1)
+    dispose()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', ctrlKey: true, cancelable: true }))
+    expect(callback).toHaveBeenCalledTimes(1)
+  })
+
+  it('hydrates bundled libraries from the CES web server', async () => {
+    window.history.replaceState({}, '', '/api/v1/projects/p/editor-sessions/s/proxy/')
+    mockCesApi.mockImplementation(async (path: string) =>
+      path === '/api/context/libraries'
+        ? { archives: [{ manifest: { name: 'iec-standard-fb' } }], installed: [{ name: 'iec-standard-fb', bundled: true }] }
+        : { success: true },
+    )
+    installCesWebBridge()
+
+    await expect(window.bridge.loadAllLibraries()).resolves.toEqual([{ manifest: { name: 'iec-standard-fb' } }])
+    await expect(window.bridge.listInstalledLibraries()).resolves.toEqual([{ name: 'iec-standard-fb', bundled: true }])
+  })
+
 })

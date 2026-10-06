@@ -113,6 +113,38 @@ function restampBlockNodes(
     if (!userPou && !libPou) continue
     const pinTypes = userPou ? userPouPinTypes(userPou) : libraryPinTypes(libPou!)
 
+    // PLCopen block instances carry their semantic pin names but not pin IEC
+    // types.  The CES canonical round trip therefore reconstructs handles from
+    // those names, while the authoritative type/class signature comes from the
+    // current library (or project-owned POU). Hydrate an imported empty variant
+    // before the normal type-refresh pass.
+    if (variant.variables.length === 0) {
+      if (libPou) {
+        variant.variables = libPou.variables.map((variable) => ({
+          ...variable,
+          type: { ...variable.type },
+        })) as typeof variant.variables
+      } else if (userPou) {
+        const restored = (userPou.interface?.variables ?? []).map((variable) => ({
+          id: variable.id,
+          name: variable.name,
+          class: variable.class,
+          type: { ...variable.type, value: variable.type.value.toUpperCase() },
+        }))
+        if (userPou.pouType === 'function' && userPou.interface?.returnType) {
+          const returnType = userPou.interface.returnType.toUpperCase()
+          restored.push({
+            id: 'OUT',
+            name: 'OUT',
+            class: 'output',
+            type: { definition: 'base-type', value: returnType },
+          } as (typeof restored)[number])
+        }
+        variant.variables = restored as typeof variant.variables
+      }
+      changed += variant.variables.length
+    }
+
     for (const variable of variant.variables) {
       const next = pinTypes.get(variable.name.toUpperCase())
       // A pin the definition no longer declares (EN/ENO, a removed one) is left

@@ -10,6 +10,8 @@ const MAX_JSON_BYTES = 16 * 1024 * 1024
 const MAX_SYMBOLS = 100_000
 const MAX_LIVE_VALUES = 100_000
 const PROJECT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url))
+const DEFAULT_BUNDLED_LIBRARY_DIR = resolve(SCRIPT_DIR, '..', 'node_modules', 'strucpp', 'libs')
 // Renderer project routing treats every non-absolute path as an Autonomy Edge
 // project ID.  Web sessions therefore use an absolute *virtual* local path so
 // open/save operations stay on the CES REST bridge rather than the cloud port.
@@ -196,6 +198,34 @@ function normalizeLiveSnapshot(value, knownSymbolIds) {
       }
     }),
   }
+}
+
+async function readBundledLibraries(directory) {
+  if (!existsSync(directory)) return { archives: [], installed: [] }
+  const archives = []
+  const installed = []
+  const entries = (await fs.readdir(directory)).filter((item) => item.endsWith('.stlib')).sort()
+  for (const file of entries) {
+    try {
+      const archive = JSON.parse(await fs.readFile(join(directory, file), 'utf8'))
+      const manifest = archive?.manifest
+      if (!manifest || typeof manifest !== 'object' || typeof manifest.name !== 'string') continue
+      archives.push(archive)
+      installed.push({
+        name: manifest.name,
+        version: typeof manifest.version === 'string' ? manifest.version : '',
+        bundled: true,
+        installedAt: '',
+        origin: 'bundled',
+        ...(typeof manifest.displayName === 'string' && manifest.displayName ? { displayName: manifest.displayName } : {}),
+        ...(typeof manifest.description === 'string' && manifest.description ? { description: manifest.description } : {}),
+      })
+    } catch {
+      // Match the desktop LibraryManager: one malformed bundled archive must
+      // not make the editor fail to start or hide the remaining libraries.
+    }
+  }
+  return { archives, installed }
 }
 
 async function requireExistingProjectRoot(projectRoot) {
@@ -451,6 +481,7 @@ export async function createCesEditorServer(options = {}) {
   const staticRoot = resolve(options.staticDir ?? 'release/app/dist/ces-web')
   const token = options.token ?? ''
   const debug = options.debug === true
+  const bundledLibraryDir = resolve(options.bundledLibraryDir ?? DEFAULT_BUNDLED_LIBRARY_DIR)
   const trace = (event, detail = undefined) => {
     if (!debug) return
     const suffix = detail === undefined ? '' : ` ${JSON.stringify(detail)}`
@@ -581,6 +612,10 @@ export async function createCesEditorServer(options = {}) {
         if (state.persistence.kind === 'filesystem') await writeTextInsideProject(state.persistence.root, rel, body.content)
         state.documentRevision += 1
         return json(res, 200, { success: true, revision: state.documentRevision })
+      }
+
+      if (req.method === 'GET' && path === '/api/context/libraries') {
+        return json(res, 200, await readBundledLibraries(bundledLibraryDir))
       }
 
       if ((req.method === 'PUT' || req.method === 'POST') && path === '/api/context/symbols') {

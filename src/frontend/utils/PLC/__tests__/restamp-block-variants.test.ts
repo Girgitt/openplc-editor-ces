@@ -108,6 +108,20 @@ function makePinNode(pinValue = 'OLDSTRUCT') {
 // ---------------------------------------------------------------------------
 
 describe('restampFlowBlockVariants', () => {
+  it('hydrates an imported PLCopen block whose variant has no typed signature', () => {
+    const node = makeStaleAdrNode()
+    node.data.variant.variables = []
+    const flow = { rung: { nodes: [node] } }
+
+    const changed = restampFlowBlockVariants([flow], makeSystemLibraries(), [])
+
+    expect(changed).toBe(2)
+    expect(node.data.variant.variables.map((variable) => [variable.name, variable.class, variable.type.value])).toEqual([
+      ['OUT', 'output', '__XWORD'],
+      ['IN', 'input', 'ANY'],
+    ])
+  })
+
   it('refreshes a stale library block return type (ADR ULINT -> __XWORD)', () => {
     const node = makeStaleAdrNode()
     const flow = { rung: { nodes: [node] } }
