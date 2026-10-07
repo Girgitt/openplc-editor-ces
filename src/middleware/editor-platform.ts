@@ -3,7 +3,10 @@
  */
 
 import { APP_VERSION } from '../frontend/data/constants/app-version'
+import { createCesWebCompilerAdapter } from './adapters/ces-web/compiler-adapter'
+import { createCesWebDebuggerAdapter } from './adapters/ces-web/debugger-adapter'
 import { createCesExternalSymbolAdapter } from './adapters/ces-web/external-symbol-adapter'
+import { createCesWebSimulatorAdapter } from './adapters/ces-web/simulator-adapter'
 import { createEditorAcceleratorAdapter } from './adapters/editor/accelerator-adapter'
 import { createEditorAIAdapter } from './adapters/editor/ai-adapter'
 import { createEditorCompilerAdapter } from './adapters/editor/compiler-adapter'
@@ -67,12 +70,14 @@ const editorPackages = createEditorPackageAdapter()
 export const packageUpdateNotifier = createPackageUpdateNotifier(editorPackages, APP_VERSION)
 
 export const editorPorts: PlatformPorts = {
-  compiler: createEditorCompilerAdapter({
-    findPackageUpdateNotice: (packageId) => packageUpdateNotifier.notice(packageId),
-  }),
+  compiler: isCesWeb
+    ? createCesWebCompilerAdapter()
+    : createEditorCompilerAdapter({
+        findPackageUpdateNotice: (packageId) => packageUpdateNotifier.notice(packageId),
+      }),
   runtime: editorRuntime,
-  debugger: createEditorDebuggerAdapter(),
-  simulator: createEditorSimulatorAdapter(),
+  debugger: isCesWeb ? createCesWebDebuggerAdapter() : createEditorDebuggerAdapter(),
+  simulator: isCesWeb ? createCesWebSimulatorAdapter() : createEditorSimulatorAdapter(),
   project: editorProject,
   device: createEditorDeviceAdapter(),
   orchestrator: createEditorOrchestratorAdapter(),
@@ -104,7 +109,7 @@ export const editorPorts: PlatformPorts = {
         requiresEdgeAccount: false,
         hasOrchestratorDevices: false,
         hasWebRTC: false,
-        hasInProcessSimulator: false,
+        hasInProcessSimulator: true,
         hasProjectExport: false,
         hasProjectImport: false,
         hasVersionControl: false,

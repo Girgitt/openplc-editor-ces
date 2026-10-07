@@ -1,5 +1,6 @@
 import { generatePlcopenXml } from '../frontend/services/export-actions'
 import { openPLCStoreBase } from '../frontend/store'
+import type { BoardInfo } from '../middleware/shared/ports/types'
 import { cesApi } from './api'
 
 type Bridge = Window['bridge']
@@ -19,6 +20,52 @@ function saveFileAccelerator(callback: (...args: unknown[]) => void): () => void
   }
   window.addEventListener('keydown', listener, true)
   return () => window.removeEventListener('keydown', listener, true)
+}
+
+
+const CES_SIMULATOR_BOARD = 'OpenPLC Simulator'
+
+function cesSimulatorBoards(): Map<string, BoardInfo> {
+  return new Map([
+    [
+      CES_SIMULATOR_BOARD,
+      {
+        compiler: 'simulator',
+        core: 'arduino:avr',
+        platform: 'arduino:avr:mega',
+        preview: 'simulator.png',
+        specs: {
+          CPU: 'Emulated ATmega2560 at 16MHz',
+          RAM: '63.5 KB',
+          Flash: '256 KB',
+          'Digital Pins': '70',
+          'Analog Pins': '16',
+          'PWM Pins': '15',
+          WiFi: 'No',
+          Bluetooth: 'No',
+          Ethernet: 'No',
+        },
+        capabilities: {
+          pinMapping: false,
+          vppIo: false,
+          modbusTcpRemote: true,
+          ethercat: true,
+          modbusTcpServer: true,
+          opcuaServer: true,
+          s7Server: true,
+          debuggerTransports: ['modbus-serial'],
+          pythonFunctionBlocks: true,
+          arduinoApiCompletions: true,
+          hasRuntimeStats: false,
+          isInProcessSimulator: true,
+          directUsbUpload: true,
+        },
+        debug: {
+          channels: [{ label: 'Simulator', channel: 'simulator', enabledWhen: true, params: {} }],
+        },
+      },
+    ],
+  ])
 }
 
 type BundledLibraryResponse = {
@@ -61,9 +108,14 @@ async function saveProjectFiles(files: unknown): Promise<{ success: boolean; err
   try {
     if (isEmbeddedCesEditorSession()) {
       await saveCanonicalSnapshot()
+      // The raw editor project is transient build input only. CES canonical PLCopen
+      // remains the persistence authority; M5-3 uses this snapshot exclusively to
+      // invoke the existing OpenPLC simulator compiler.
+      await cesApi('/api/simulator/project', { method: 'POST', body: JSON.stringify(files) })
       return { success: true }
     }
     await cesApi('/api/document/save', { method: 'POST', body: JSON.stringify(files) })
+    await cesApi('/api/simulator/project', { method: 'POST', body: JSON.stringify(files) })
     return { success: true }
   } catch (error: unknown) {
     return { success: false, error: error instanceof Error ? error.message : String(error) }
@@ -123,9 +175,9 @@ export function installCesWebBridge(): void {
     listInstalledLibraries: async () => (await bundledLibraries()).installed ?? [],
     listInstalledPackages: async () => [],
     verifyInstalledPackageSignatures: async () => [],
-    getAvailableBoards: async () => new Map(),
+    getAvailableBoards: async () => cesSimulatorBoards(),
     getAvailableCommunicationPorts: async () => [],
-    refreshAvailableBoards: async () => new Map(),
+    refreshAvailableBoards: async () => [{ board: CES_SIMULATOR_BOARD, version: '' }],
     refreshCommunicationPorts: async () => [],
     setMenuProjectOpen: () => undefined,
     openPathPicker: async () => ({ success: false, error: { title: 'Unavailable', description: 'CES supplies the document.' } }),

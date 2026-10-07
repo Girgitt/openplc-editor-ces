@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { existsSync, promises as fs } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createCesEditorServer } from './ces-web-server.mjs'
+import { buildSimulatorProject, createCesEditorServer } from './ces-web-server.mjs'
 import { loadProjectViaApi } from './ces-web-load-project.mjs'
 
 const tempRoot = await fs.mkdtemp(join(tmpdir(), 'openplc-ces-web-s1h-'))
@@ -36,7 +36,73 @@ async function withServer(options, run) {
 }
 
 try {
-  await withServer({ bundledLibraryDir }, async ({ base, call }) => {
+
+  // Exercise the real M5-3 build host contract without invoking Electron: the
+  // fake executable behaves like the headless OpenPLC CLI and emits the same
+  // JSON/artifact shape. This catches argument/path/artifact regressions in the
+  // server-side orchestration itself.
+  const fakeEditorRoot = join(tempRoot, 'fake-editor')
+  const fakeMain = join(fakeEditorRoot, 'release', 'app', 'dist', 'main', 'main.js')
+  const fakeElectron = join(fakeEditorRoot, 'fake-electron')
+  await fs.mkdir(join(fakeEditorRoot, 'release', 'app', 'dist', 'main'), { recursive: true })
+  await fs.writeFile(fakeMain, '// fake bundle\n')
+  await fs.writeFile(
+    fakeElectron,
+    `#!/usr/bin/env node
+` +
+      `const fs=require('node:fs'); const path=require('node:path');\n` +
+      `const root=process.argv[5]; const out=path.join(root,'build','OpenPLC Simulator');\n` +
+      `fs.mkdirSync(path.join(out,'src'),{recursive:true});\n` +
+      `const fw=path.join(out,'firmware.hex'); fs.writeFileSync(fw,':00000001FF\\n');\n` +
+      `fs.writeFileSync(path.join(out,'src','debug-map.json'),JSON.stringify({md5:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',variables:[]}));\n` +
+      `process.stderr.write('fake compile complete\\n');\n` +
+      `process.stdout.write(JSON.stringify({ok:true,firmwarePath:fw})+'\\n');\n`,
+  )
+  await fs.chmod(fakeElectron, 0o755)
+  const fakeDocument = {
+    format: 'openplc-project-files',
+    documentId: 'fake',
+    files: {
+      projectPath: '/ces-session',
+      projectJson: '{"meta":{"name":"Demo","type":"plc-project"}}',
+      deviceConfig: '{}',
+      pinMapping: '{}',
+      libraryManifest: '',
+      pouFiles: [{ relativePath: 'pous/programs/Main.st', content: 'PROGRAM Main\nEND_PROGRAM\n' }],
+      serverFiles: [], remoteDeviceFiles: [], dataTypeFiles: [], deletions: [],
+    },
+  }
+  const hostedBuild = await buildSimulatorProject(fakeDocument, { editorRoot: fakeEditorRoot, electronExecutable: fakeElectron })
+  assert.equal(hostedBuild.success, true)
+  assert.equal(hostedBuild.firmwareHex, ':00000001FF\n')
+  assert.equal(hostedBuild.md5, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+  assert.deepEqual(hostedBuild.logs, ['fake compile complete'])
+
+  const slowElectron = join(fakeEditorRoot, 'slow-electron')
+  await fs.writeFile(
+    slowElectron,
+    `#!/usr/bin/env node\nsetTimeout(() => {}, 10_000)\n`,
+  )
+  await fs.chmod(slowElectron, 0o755)
+  await assert.rejects(
+    () => buildSimulatorProject(fakeDocument, {
+      editorRoot: fakeEditorRoot,
+      electronExecutable: slowElectron,
+      simulatorBuildTimeoutMs: 50,
+    }),
+    /simulator build timed out after 50 ms/,
+  )
+
+  await withServer({
+    bundledLibraryDir,
+    simulationBuilder: async (document) => ({
+      success: true,
+      firmwareHex: ':00000001FF\n',
+      debugMap: JSON.stringify({ md5: '0123456789abcdef0123456789abcdef', variables: [] }),
+      md5: '0123456789abcdef0123456789abcdef',
+      logs: [`built ${document.files.pouFiles.length} POU(s)`],
+    }),
+  }, async ({ base, call }) => {
     let response = await fetch(`${base}/api/health`)
     assert.equal(response.status, 200)
     assert.equal((await response.json()).documentLoaded, false)
@@ -103,6 +169,41 @@ try {
     const saved = await response.json()
     assert.equal(saved.document.format, 'openplc-project-files')
     assert.equal(saved.document.files.pouFiles[0].content.includes('PROGRAM Main'), true)
+
+
+    response = await call('/api/simulator/build', { method: 'POST', body: '{}' })
+    assert.equal(response.status, 409, 'simulator build requires an explicit transient project snapshot')
+    response = await call('/api/simulator/project', { method: 'POST', body: JSON.stringify(files) })
+    assert.equal(response.status, 200)
+    assert.equal((await response.json()).pouFiles, 1)
+    response = await call('/api/simulator/build', { method: 'POST', body: '{}' })
+    assert.equal(response.status, 200)
+    const build = await response.json()
+    assert.equal(build.success, true)
+    assert.equal(build.firmwareHex, ':00000001FF\n')
+    assert.equal(build.md5, '0123456789abcdef0123456789abcdef')
+    assert.deepEqual(build.logs, ['built 1 POU(s)'])
+
+    response = await call('/api/simulator/live')
+    let simulatorLive = await response.json()
+    assert.equal(simulatorLive.active, false)
+    response = await call('/api/simulator/live', {
+      method: 'POST',
+      body: JSON.stringify({ values: [
+        { key: 'Main:RunFb', value: 'TRUE' },
+        { key: 'Main:Speed', value: '12.5' },
+      ] }),
+    })
+    assert.equal(response.status, 200)
+    response = await call('/api/simulator/live')
+    simulatorLive = await response.json()
+    assert.equal(simulatorLive.active, true)
+    assert.equal(simulatorLive.values.length, 2)
+    assert.equal(simulatorLive.values[0].key, 'Main:RunFb')
+    response = await call('/api/simulator/live/clear', { method: 'POST', body: '{}' })
+    assert.equal(response.status, 200)
+    response = await call('/api/simulator/live')
+    assert.equal((await response.json()).active, false)
 
     response = await call('/api/document/save-file', {
       method: 'POST',

@@ -26,17 +26,21 @@ beforeEach(() => {
 })
 
 describe('CES embedded editor canonical save bridge', () => {
-  it('uses canonical PLCopen as the only persistence write in embedded mode', async () => {
+  it('saves canonical PLCopen and refreshes only a transient simulator build snapshot in embedded mode', async () => {
     window.history.replaceState({}, '', '/api/v1/projects/p/editor-sessions/s/proxy/')
     installCesWebBridge()
 
     const result = await window.bridge.writeProjectFiles({ projectPath: '/ces-session' } as never)
 
     expect(result).toEqual({ success: true })
-    expect(mockCesApi).toHaveBeenCalledTimes(1)
-    expect(mockCesApi).toHaveBeenCalledWith('../canonical-save', {
+    expect(mockCesApi).toHaveBeenCalledTimes(2)
+    expect(mockCesApi).toHaveBeenNthCalledWith(1, '../canonical-save', {
       method: 'POST',
       body: JSON.stringify({ xml: '<project/>' }),
+    })
+    expect(mockCesApi).toHaveBeenNthCalledWith(2, '/api/simulator/project', {
+      method: 'POST',
+      body: JSON.stringify({ projectPath: '/ces-session' }),
     })
   })
 
@@ -59,8 +63,9 @@ describe('CES embedded editor canonical save bridge', () => {
 
     expect(result).toEqual({ success: true })
     expect(mockGeneratePlcopenXml).not.toHaveBeenCalled()
-    expect(mockCesApi).toHaveBeenCalledTimes(1)
-    expect(mockCesApi).toHaveBeenCalledWith('/api/document/save', expect.any(Object))
+    expect(mockCesApi).toHaveBeenCalledTimes(2)
+    expect(mockCesApi).toHaveBeenNthCalledWith(1, '/api/document/save', expect.any(Object))
+    expect(mockCesApi).toHaveBeenNthCalledWith(2, '/api/simulator/project', expect.any(Object))
   })
   it('intercepts Ctrl+S and forwards it to the editor save-file accelerator', () => {
     window.history.replaceState({}, '', '/api/v1/projects/p/editor-sessions/s/proxy/')
@@ -89,6 +94,15 @@ describe('CES embedded editor canonical save bridge', () => {
 
     await expect(window.bridge.loadAllLibraries()).resolves.toEqual([{ manifest: { name: 'iec-standard-fb' } }])
     await expect(window.bridge.listInstalledLibraries()).resolves.toEqual([{ name: 'iec-standard-fb', bundled: true }])
+  })
+
+  it('exposes the built-in OpenPLC Simulator board in CES web mode', async () => {
+    installCesWebBridge()
+    const boards = await window.bridge.getAvailableBoards()
+    expect(boards.get('OpenPLC Simulator')).toMatchObject({
+      compiler: 'simulator',
+      capabilities: { isInProcessSimulator: true },
+    })
   })
 
 })

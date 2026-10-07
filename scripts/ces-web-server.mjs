@@ -1,7 +1,9 @@
 #!/usr/bin/env node
+import { spawn } from 'node:child_process'
 import { createReadStream, existsSync, promises as fs } from 'node:fs'
 import { createServer } from 'node:http'
-import { basename, dirname, extname, join, normalize, resolve, sep } from 'node:path'
+import { tmpdir } from 'node:os'
+import { basename, dirname, extname, isAbsolute, join, normalize, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const DEFAULT_HOST = '127.0.0.1'
@@ -12,6 +14,9 @@ const MAX_LIVE_VALUES = 100_000
 const PROJECT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url))
 const DEFAULT_BUNDLED_LIBRARY_DIR = resolve(SCRIPT_DIR, '..', 'node_modules', 'strucpp', 'libs')
+const EDITOR_ROOT = resolve(SCRIPT_DIR, '..')
+const SIMULATOR_TARGET = 'OpenPLC Simulator'
+const DEFAULT_SIMULATOR_BUILD_TIMEOUT_MS = 120_000
 // Renderer project routing treats every non-absolute path as an Autonomy Edge
 // project ID.  Web sessions therefore use an absolute *virtual* local path so
 // open/save operations stay on the CES REST bridge rather than the cloud port.
@@ -35,6 +40,106 @@ const MIME = {
   '.ttf': 'font/ttf',
   '.woff': 'font/woff',
   '.woff2': 'font/woff2',
+}
+
+
+function electronExecutable(editorRoot = EDITOR_ROOT) {
+  return join(editorRoot, 'node_modules', '.bin', process.platform === 'win32' ? 'electron.cmd' : 'electron')
+}
+
+function runProcess(command, args, options = {}) {
+  return new Promise((resolveRun, rejectRun) => {
+    const timeoutMs = Number(options.timeoutMs ?? 0)
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: options.env ?? process.env,
+      shell: process.platform === 'win32',
+      // Give the compiler its own process group on POSIX so a timeout can stop
+      // Electron and any compiler/toolchain children it spawned.
+      detached: process.platform !== 'win32',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    let settled = false
+    let timer = null
+
+    const finish = (callback) => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      callback()
+    }
+    const terminate = () => {
+      if (child.pid === undefined) return
+      try {
+        if (process.platform === 'win32') child.kill('SIGTERM')
+        else process.kill(-child.pid, 'SIGTERM')
+      } catch {
+        try { child.kill('SIGTERM') } catch { /* already exited */ }
+      }
+    }
+
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', (chunk) => { stdout += chunk })
+    child.stderr.on('data', (chunk) => { stderr += chunk })
+    child.once('error', (error) => finish(() => rejectRun(error)))
+    child.once('close', (code, signal) => finish(() => resolveRun({ code, signal, stdout, stderr })))
+
+    if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+      timer = setTimeout(() => {
+        terminate()
+        finish(() => rejectRun(new Error(`OpenPLC simulator build timed out after ${timeoutMs} ms`)))
+      }, timeoutMs)
+    }
+  })
+}
+
+export async function buildSimulatorProject(document, options = {}) {
+  const editorRoot = resolve(options.editorRoot ?? EDITOR_ROOT)
+  const electron = options.electronExecutable ?? electronExecutable(editorRoot)
+  const mainBundle = join(editorRoot, 'release', 'app', 'dist', 'main', 'main.js')
+  if (!existsSync(electron)) throw new HttpError(503, `OpenPLC Electron CLI is unavailable at ${electron}`)
+  if (!existsSync(mainBundle)) throw new HttpError(503, 'OpenPLC CLI bundle is missing; run npm run build:ces-web')
+
+  const root = await fs.mkdtemp(join(tmpdir(), 'openplc-ces-simulator-'))
+  try {
+    await writeProjectDirectory(root, document)
+    const result = await runProcess(
+      electron,
+      [mainBundle, '--cli', 'compile', root, '--target', SIMULATOR_TARGET, '--json'],
+      { cwd: editorRoot, timeoutMs: options.simulatorBuildTimeoutMs ?? DEFAULT_SIMULATOR_BUILD_TIMEOUT_MS },
+    )
+    let payload = null
+    try { payload = JSON.parse(result.stdout.trim() || '{}') } catch {
+      throw new Error(`OpenPLC CLI returned invalid JSON: ${result.stdout.slice(0, 500)}`)
+    }
+    if (result.code !== 0 || payload?.ok !== true) {
+      const message = payload?.error?.message || result.stderr.trim() || `OpenPLC CLI exited with code ${result.code}`
+      throw new Error(message)
+    }
+    const firmwarePath = typeof payload.firmwarePath === 'string' ? payload.firmwarePath : ''
+    if (!firmwarePath) throw new Error('OpenPLC CLI did not return a simulator firmware path')
+    const resolvedFirmwarePath = isAbsolute(firmwarePath) ? firmwarePath : resolve(root, firmwarePath)
+    const debugMapPath = join(root, 'build', SIMULATOR_TARGET, 'src', 'debug-map.json')
+    const [firmwareHex, debugMap] = await Promise.all([
+      fs.readFile(resolvedFirmwarePath, 'utf8'),
+      fs.readFile(debugMapPath, 'utf8'),
+    ])
+    const parsedDebugMap = JSON.parse(debugMap)
+    const md5 = typeof parsedDebugMap?.md5 === 'string' ? parsedDebugMap.md5 : ''
+    if (!md5) throw new Error('debug-map.json does not contain a program md5')
+    return {
+      success: true,
+      firmwareHex,
+      debugMap,
+      md5,
+      logs: result.stderr.split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
+    }
+  } finally {
+    await fs.rm(root, { recursive: true, force: true })
+  }
 }
 
 class HttpError extends Error {
@@ -195,6 +300,28 @@ function normalizeLiveSnapshot(value, knownSymbolIds) {
         id: entry.id,
         value: String(entry.value),
         quality: typeof entry.quality === 'string' ? entry.quality : 'good',
+      }
+    }),
+  }
+}
+
+function normalizeSimulatorLiveSnapshot(value, nextRevision) {
+  if (!value || typeof value !== 'object') throw new Error('simulator snapshot payload is required')
+  const values = Array.isArray(value.values) ? value.values : []
+  if (values.length > MAX_LIVE_VALUES) throw new Error(`simulator live value count exceeds ${MAX_LIVE_VALUES}`)
+  const seen = new Set()
+  return {
+    active: true,
+    revision: nextRevision,
+    values: values.map((entry) => {
+      if (!entry || typeof entry.key !== 'string' || entry.key.trim() === '') {
+        throw new Error('simulator live value key is required')
+      }
+      if (seen.has(entry.key)) throw new Error(`duplicate simulator live key: ${entry.key}`)
+      seen.add(entry.key)
+      return {
+        key: entry.key,
+        value: String(entry.value ?? ''),
       }
     }),
   }
@@ -454,6 +581,7 @@ function parseArgs(argv) {
     initializeNewProject: false,
     token: '',
     debug: false,
+    simulatorBuildTimeoutMs: DEFAULT_SIMULATOR_BUILD_TIMEOUT_MS,
   }
   for (let i = 0; i < argv.length; i += 1) {
     const key = argv[i]
@@ -465,6 +593,7 @@ function parseArgs(argv) {
     else if (key === '--project-root' && next) { result.projectRoot = next; i += 1 }
     else if (key === '--session-token' && next) { result.token = next; i += 1 }
     else if (key === '--debug') result.debug = true
+    else if (key === '--simulator-build-timeout-ms' && next) { result.simulatorBuildTimeoutMs = Number(next); i += 1 }
     else if (key.startsWith('--initialize-new-project=')) {
       result.initializeNewProject = parseBoolean(key.slice(key.indexOf('=') + 1), '--initialize-new-project')
     } else if (key === '--initialize-new-project') {
@@ -482,6 +611,7 @@ export async function createCesEditorServer(options = {}) {
   const token = options.token ?? ''
   const debug = options.debug === true
   const bundledLibraryDir = resolve(options.bundledLibraryDir ?? DEFAULT_BUNDLED_LIBRARY_DIR)
+  const simulationBuilder = options.simulationBuilder ?? ((document) => buildSimulatorProject(document, options))
   const trace = (event, detail = undefined) => {
     if (!debug) return
     const suffix = detail === undefined ? '' : ` ${JSON.stringify(detail)}`
@@ -503,6 +633,9 @@ export async function createCesEditorServer(options = {}) {
     persistence: initialPersistence,
     symbols: [],
     live: { active: false, revision: 0, values: [] },
+    simulatorProject: null,
+    simulatorBuildRevision: 0,
+    simulatorLive: { active: false, revision: 0, values: [] },
   }
 
   const authorized = (req) => !token || req.headers['x-ces-editor-token'] === token || req.headers.authorization === `Bearer ${token}`
@@ -529,6 +662,10 @@ export async function createCesEditorServer(options = {}) {
           documentLoaded: state.document !== null,
           documentRevision: state.documentRevision,
           persistence: state.persistence.kind,
+          simulatorProjectReady: state.simulatorProject !== null,
+          simulatorBuildRevision: state.simulatorBuildRevision,
+          simulatorLiveActive: state.simulatorLive.active,
+          simulatorLiveRevision: state.simulatorLive.revision,
         })
       }
 
@@ -569,6 +706,8 @@ export async function createCesEditorServer(options = {}) {
       if (req.method === 'POST' && path === '/api/document/load') {
         state.document = normalizeDocument(await readJson(req))
         state.persistence = { kind: 'rest' }
+        state.simulatorProject = null
+        state.simulatorLive = { active: false, revision: state.simulatorLive.revision + 1, values: [] }
         state.documentRevision += 1
         return json(res, 200, { success: true, revision: state.documentRevision, document: state.document })
       }
@@ -612,6 +751,48 @@ export async function createCesEditorServer(options = {}) {
         if (state.persistence.kind === 'filesystem') await writeTextInsideProject(state.persistence.root, rel, body.content)
         state.documentRevision += 1
         return json(res, 200, { success: true, revision: state.documentRevision })
+      }
+
+
+      if (req.method === 'POST' && path === '/api/simulator/project') {
+        state.simulatorProject = normalizeFilesDocument({
+          documentId: state.document?.documentId ?? 'ces-simulator',
+          files: await readJson(req),
+        })
+        state.simulatorLive = { active: false, revision: state.simulatorLive.revision + 1, values: [] }
+        return json(res, 200, { success: true, pouFiles: state.simulatorProject.files.pouFiles.length })
+      }
+      if (req.method === 'POST' && path === '/api/simulator/build') {
+        if (!state.simulatorProject) {
+          return json(res, 409, { success: false, error: 'Save the project before building the simulator.' })
+        }
+        try {
+          const result = await simulationBuilder(state.simulatorProject)
+          state.simulatorBuildRevision += 1
+          return json(res, 200, { ...result, revision: state.simulatorBuildRevision })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          return json(res, error instanceof HttpError ? error.status : 422, { success: false, error: message })
+        }
+      }
+
+      if (req.method === 'POST' && path === '/api/simulator/live') {
+        state.simulatorLive = normalizeSimulatorLiveSnapshot(
+          await readJson(req),
+          state.simulatorLive.revision + 1,
+        )
+        return json(res, 200, {
+          success: true,
+          revision: state.simulatorLive.revision,
+          count: state.simulatorLive.values.length,
+        })
+      }
+      if (req.method === 'GET' && path === '/api/simulator/live') {
+        return json(res, 200, state.simulatorLive)
+      }
+      if (req.method === 'POST' && path === '/api/simulator/live/clear') {
+        state.simulatorLive = { active: false, revision: state.simulatorLive.revision + 1, values: [] }
+        return json(res, 200, { success: true, revision: state.simulatorLive.revision })
       }
 
       if (req.method === 'GET' && path === '/api/context/libraries') {
