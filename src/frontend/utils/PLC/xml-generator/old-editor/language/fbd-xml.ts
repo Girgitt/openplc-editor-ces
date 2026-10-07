@@ -18,6 +18,7 @@ import {
   OutVariableFbdXML,
 } from '@root/middleware/shared/ports/xml-types/old-editor/pous/languages/fbd-diagram'
 import { Edge as FlowEdge, Node as FlowNode } from '@xyflow/react'
+import { validateFbdRung } from '../../../graphical/fbd-edge-integrity'
 
 const getEdgePaths = (edge: FlowEdge, nodes: FlowNode[]) => {
   const sourceNodeHandle = (nodes.find((node) => node.id === edge.source)?.data as BasicNodeData).outputHandles?.find(
@@ -313,20 +314,23 @@ const fbdToXml = (rung: FBDRungState) => {
     },
   }
 
-  const { nodes, edges: _edges } = rung
+  // Do not compile a graph that visually contains wires but whose handle
+  // references cannot be encoded. Legacy one-pin aliases are normalized.
+  const validatedRung = validateFbdRung(rung)
+  const { nodes } = validatedRung
   nodes.forEach((node) => {
     switch (node.type as CustomFbdNodeTypes) {
       case 'block':
-        fbdXML.body.FBD.block.push(blockToXml(node as BlockNode<BlockVariant>, rung))
+        fbdXML.body.FBD.block.push(blockToXml(node as BlockNode<BlockVariant>, validatedRung))
         break
       case 'input-variable':
         fbdXML.body.FBD.inVariable.push(inputVariableToXml(node as VariableNode))
         break
       case 'output-variable':
-        fbdXML.body.FBD.outVariable.push(outputVariableToXml(node as VariableNode, rung))
+        fbdXML.body.FBD.outVariable.push(outputVariableToXml(node as VariableNode, validatedRung))
         break
       case 'connector':
-        fbdXML.body.FBD.connector.push(connectorToXml(node as ConnectionNode, rung))
+        fbdXML.body.FBD.connector.push(connectorToXml(node as ConnectionNode, validatedRung))
         break
       case 'continuation':
         fbdXML.body.FBD.continuation.push(continuationToXml(node as ConnectionNode))

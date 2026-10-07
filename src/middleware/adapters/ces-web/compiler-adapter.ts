@@ -1,4 +1,5 @@
 import { openPLCStoreBase } from '@root/frontend/store'
+import { validateFbdRung } from '@root/frontend/utils/PLC/graphical/fbd-edge-integrity'
 import type { CompilerPort } from '@root/middleware/shared/ports/compiler-port'
 import type {
   CompileProgressEvent,
@@ -41,6 +42,16 @@ function installSimulatorDebugInstanceOverlay(projectData: PLCProjectData): void
   )
 }
 
+function validateSimulatorFbd(projectData: PLCProjectData): void {
+  // The simulator executes the last saved canonical PLCopen. Never start a new
+  // build while a visible in-memory wire points at a nonexistent formal pin.
+  for (const pou of projectData.pous) {
+    if (pou.body.language !== 'fbd') continue
+    const value = pou.body.value as { rung?: Parameters<typeof validateFbdRung>[0] } | undefined
+    if (value?.rung) validateFbdRung(value.rung)
+  }
+}
+
 async function build(onProgress: (event: CompileProgressEvent) => void): Promise<BuildResponse> {
   progress(onProgress, { stage: 'xml', message: 'Preparing canonical project for OpenPLC Simulator…', progress: 5 })
   const result = await cesApi<BuildResponse>('/api/simulator/build', { method: 'POST', body: '{}' })
@@ -60,6 +71,7 @@ export function createCesWebCompilerAdapter(): CompilerPort {
       }
       try {
         openPLCStoreBase.getState().workspaceActions.setDebugInstanceOverlay(null)
+        validateSimulatorFbd(args.projectData)
         const result = await build(onProgress)
         installSimulatorDebugInstanceOverlay(args.projectData)
         progress(onProgress, {
@@ -82,6 +94,7 @@ export function createCesWebCompilerAdapter(): CompilerPort {
       }
       try {
         openPLCStoreBase.getState().workspaceActions.setDebugInstanceOverlay(null)
+        validateSimulatorFbd(args.projectData)
         const result = await build(onProgress)
         installSimulatorDebugInstanceOverlay(args.projectData)
         return { success: true, debugContent: result.debugMap, md5: result.md5 }

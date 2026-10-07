@@ -3,8 +3,65 @@ import type { VariableNode } from '@root/frontend/components/_atoms/graphical-ed
 import type { BlockVariant } from '@root/frontend/components/_atoms/graphical-editor/types/block'
 
 import { parseFbdXml } from '../fbd-xml'
+import { fbdToXml } from '../../../xml-generator/old-editor/language/fbd-xml'
 
 describe('parseFbdXml', () => {
+  it('preserves both connected RS inputs across repeated PLCopen round trips', () => {
+    const source = (id: string, name: string, y: number) => ({
+      '@localId': id,
+      '@executionOrderId': '0',
+      '@width': '80',
+      '@height': '32',
+      position: { '@x': '20', '@y': String(y) },
+      connectionPointOut: { relPosition: { '@x': '80', '@y': '16' } },
+      expression: name,
+    })
+    const fbd = {
+      inVariable: [source('1', 'v1', 0), source('2', 'v2', 60)],
+      block: [{
+        '@localId': '3',
+        '@typeName': 'RS',
+        '@instanceName': 'RS0',
+        '@executionOrderId': '1',
+        '@width': '90',
+        '@height': '120',
+        position: { '@x': '200', '@y': '0' },
+        inputVariables: { variable: [
+          {
+            '@formalParameter': 'S',
+            connectionPointIn: {
+              relPosition: { '@x': '0', '@y': '48' },
+              connection: [{ '@refLocalId': '1', '@formalParameter': '' }],
+            },
+          },
+          {
+            '@formalParameter': 'R1',
+            connectionPointIn: {
+              relPosition: { '@x': '0', '@y': '96' },
+              connection: [{ '@refLocalId': '2' }],
+            },
+          },
+        ] },
+        outputVariables: { variable: [{
+          '@formalParameter': 'Q1',
+          connectionPointOut: { relPosition: { '@x': '90', '@y': '48' } },
+        }] },
+      }],
+    }
+    let parsed = parseFbdXml('rs-test', fbd)
+    for (let i = 0; i < 2; i += 1) {
+      expect(parsed.warnings).toEqual([])
+      expect(parsed.body.rung.edges.map((edge) => [edge.sourceHandle, edge.targetHandle])).toEqual([
+        ['output-variable', 'S'], ['output-variable', 'R1'],
+      ])
+      const serialized = fbdToXml(parsed.body.rung).body.FBD
+      expect(serialized.block[0].inputVariables.variable.map((variable) => [
+        variable['@formalParameter'], variable.connectionPointIn.connection[0]?.['@refLocalId'],
+      ])).toEqual([['S', '1'], ['R1', '2']])
+      parsed = parseFbdXml('rs-test', serialized)
+    }
+  })
+
   it('returns an empty rung for an empty FBD body', () => {
     const { body, warnings } = parseFbdXml('empty', {})
     expect(warnings).toEqual([])

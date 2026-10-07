@@ -146,7 +146,7 @@ describe('fbdToXml (old-editor)', () => {
     expect(ov.connectionPointIn.connection[0]['@formalParameter']).toBeUndefined()
   })
 
-  it('output-variable filters out undefined connections (source not found)', () => {
+  it('rejects output-variable connections with a missing source', () => {
     const rung = makeRung({
       nodes: [
         {
@@ -180,8 +180,7 @@ describe('fbdToXml (old-editor)', () => {
       ],
       edges: [{ id: 'e1', source: 'nonexistent', target: 'ov1', sourceHandle: 'out', targetHandle: 'in' }],
     })
-    const result = fbdToXml(rung)
-    expect(result.body.FBD.outVariable[0].connectionPointIn.connection).toHaveLength(0)
+    expect(() => fbdToXml(rung)).toThrow(/FBD edge/)
   })
 
   it('converts a block node with connected input', () => {
@@ -502,7 +501,7 @@ describe('fbdToXml (old-editor)', () => {
     expect(positions.length).toBe(2)
   })
 
-  it('block input filters out undefined (missing path)', () => {
+  it('rejects block input connections without a source handle', () => {
     // Edge with no matching handles should be filtered
     const rung = makeRung({
       nodes: [
@@ -552,9 +551,7 @@ describe('fbdToXml (old-editor)', () => {
       ],
       edges: [{ id: 'e1', source: 'iv1', target: 'b1', sourceHandle: 'nonexistent', targetHandle: 'IN1' }],
     })
-    const result = fbdToXml(rung)
-    // The connection is filtered out because getEdgePaths returns undefined (no matching outputHandle)
-    expect(result.body.FBD.block[0].inputVariables.variable).toHaveLength(0)
+    expect(() => fbdToXml(rung)).toThrow(/FBD edge/)
   })
 
   it('sets instanceName for function-block variant', () => {
@@ -653,7 +650,7 @@ describe('fbdToXml (old-editor)', () => {
     expect(result.body.FBD.connector[0].connectionPointIn.connection).toHaveLength(1)
   })
 
-  it('connector filters out connections with missing source or path', () => {
+  it('rejects connector connections with a missing source', () => {
     const rung = makeRung({
       nodes: [
         {
@@ -685,8 +682,7 @@ describe('fbdToXml (old-editor)', () => {
       ],
       edges: [{ id: 'e1', source: 'nonexistent', target: 'conn1', sourceHandle: 'out', targetHandle: 'in' }],
     })
-    const result = fbdToXml(rung)
-    expect(result.body.FBD.connector[0].connectionPointIn.connection).toHaveLength(0)
+    expect(() => fbdToXml(rung)).toThrow(/FBD edge/)
   })
 
   it('converts a continuation node', () => {
@@ -809,7 +805,7 @@ describe('fbdToXml (old-editor)', () => {
     expect(result.body.FBD.block).toHaveLength(0)
   })
 
-  it('block input filters out edges where source node is not found', () => {
+  it('rejects block input edges where source node is not found', () => {
     const rung = makeRung({
       nodes: [
         {
@@ -836,8 +832,7 @@ describe('fbdToXml (old-editor)', () => {
       ],
       edges: [{ id: 'e1', source: 'nonexistent', target: 'b1', sourceHandle: 'out', targetHandle: 'IN1' }],
     })
-    const result = fbdToXml(rung)
-    expect(result.body.FBD.block[0].inputVariables.variable).toHaveLength(0)
+    expect(() => fbdToXml(rung)).toThrow(/FBD edge/)
   })
 
   it('output-variable with path where source is a block includes formalParameter', () => {
@@ -907,7 +902,7 @@ describe('fbdToXml (old-editor)', () => {
     expect(ov.connectionPointIn.connection[0].position.length).toBeGreaterThanOrEqual(2)
   })
 
-  it('output-variable filters out connections where path is undefined', () => {
+  it('rejects output-variable connections without a source handle', () => {
     const rung = makeRung({
       nodes: [
         {
@@ -963,9 +958,7 @@ describe('fbdToXml (old-editor)', () => {
       ],
       edges: [{ id: 'e1', source: 'iv1', target: 'ov1', sourceHandle: 'nonexistent', targetHandle: 'in' }],
     })
-    const result = fbdToXml(rung)
-    // Path is undefined because source handle doesn't match any outputHandle
-    expect(result.body.FBD.outVariable[0].connectionPointIn.connection).toHaveLength(0)
+    expect(() => fbdToXml(rung)).toThrow(/FBD edge/)
   })
 
   it('connector with block source includes formalParameter', () => {
@@ -1032,7 +1025,7 @@ describe('fbdToXml (old-editor)', () => {
     expect(conn.connectionPointIn.connection[0]['@formalParameter']).toBe('OUT')
   })
 
-  it('connector filters out connections where path is undefined', () => {
+  it('rejects connector connections without a source handle', () => {
     const rung = makeRung({
       nodes: [
         {
@@ -1086,7 +1079,6 @@ describe('fbdToXml (old-editor)', () => {
       ],
       edges: [{ id: 'e1', source: 'iv1', target: 'conn1', sourceHandle: 'nonexistent', targetHandle: 'in' }],
     })
-    const result = fbdToXml(rung)
-    expect(result.body.FBD.connector[0].connectionPointIn.connection).toHaveLength(0)
+    expect(() => fbdToXml(rung)).toThrow(/FBD edge/)
   })
 })

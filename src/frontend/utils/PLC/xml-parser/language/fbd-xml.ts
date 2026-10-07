@@ -12,6 +12,7 @@ import { clampImportedVariableWidth } from '../../../graphical/fbd-variable-widt
 import { extractXhtmlText } from '../variable-xml'
 import { asArray, asRecord, asString } from '../xml-node'
 import { makeHandle, parsePositionXml, toNumber } from './geometry'
+import { normalizeFbdEdges } from '../../graphical/fbd-edge-integrity'
 
 type FbdNode = BlockNode<BlockVariant> | CommentNode | ConnectionNode | VariableNode
 
@@ -411,7 +412,7 @@ export function parseFbdXml(pouName: string, fbdXml: unknown): { body: FBDFlowTy
       )
       continue
     }
-    const sourceHandle = pending.sourceFormalParameter ?? LEAF_OUTPUT_HANDLE_ID
+    const sourceHandle = pending.sourceFormalParameter?.trim() || LEAF_OUTPUT_HANDLE_ID
     edges.push({
       id: `xy-edge__${sourceNodeId}${sourceHandle}-${targetNodeId}${pending.targetHandle}`,
       source: sourceNodeId,
@@ -422,5 +423,16 @@ export function parseFbdXml(pouName: string, fbdXml: unknown): { body: FBDFlowTy
     })
   }
 
-  return { body: { name: pouName, updated: false, rung: { comment: '', nodes, edges, selectedNodes: [] } }, warnings }
+  // A PLCopen connection is only executable if its formalParameters resolve
+  // against the reconstructed pin interface. Recover unambiguous old aliases,
+  // but report a broken import rather than keeping a misleading painted wire.
+  const validEdges: Edge[] = []
+  for (const edge of edges) {
+    try {
+      validEdges.push(...normalizeFbdEdges(nodes, [edge]))
+    } catch (error) {
+      warnings.push(`POU "${pouName}": ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  return { body: { name: pouName, updated: false, rung: { comment: '', nodes, edges: validEdges, selectedNodes: [] } }, warnings }
 }

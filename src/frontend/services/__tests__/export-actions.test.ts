@@ -172,6 +172,17 @@ describe('executeExportPlcopen', () => {
     expect(result).toEqual({ success: false })
     expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ variant: 'fail', description: 'boom' }))
   })
+  it('reports a broken FBD connection instead of returning XML that lost the wire', () => {
+    mockXmlGenerator.mockImplementation(() => {
+      throw new Error('FBD edge "e1" references target pin "S0"; available target pins: S, R1.')
+    })
+    const result = generatePlcopenXml(makeProjectData())
+    expect(result).toEqual({
+      success: false,
+      error: 'FBD edge "e1" references target pin "S0"; available target pins: S, R1.',
+    })
+  })
+
   it('allows SFC through the lossless M5-2B PLCopen transport', () => {
     const projectData = makeProjectData({
       pous: [

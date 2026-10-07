@@ -117,11 +117,17 @@ export function generatePlcopenXml(projectData: PLCProjectData): PlcopenGenerati
     }
   }
 
-  const xmlResult = XmlGenerator(portToSchemaProjectData(projectData), 'old-editor')
-  if (!xmlResult.ok || !xmlResult.data) {
-    return { success: false, error: xmlResult.message || 'Failed to generate the PLCopen XML.' }
+  try {
+    const xmlResult = XmlGenerator(portToSchemaProjectData(projectData), 'old-editor')
+    if (!xmlResult.ok || !xmlResult.data) {
+      return { success: false, error: xmlResult.message || 'Failed to generate the PLCopen XML.' }
+    }
+    return { success: true, xml: xmlResult.data }
+  } catch (error) {
+    // FBD integrity errors are actionable; Ctrl+S must report them instead of
+    // committing silently disconnected PLCopen to the CES canonical store.
+    return { success: false, error: error instanceof Error ? error.message : String(error) }
   }
-  return { success: true, xml: xmlResult.data }
 }
 
 /**
