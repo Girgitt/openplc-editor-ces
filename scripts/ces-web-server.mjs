@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process'
-import { createReadStream, existsSync, promises as fs } from 'node:fs'
+import { createReadStream, existsSync, promises as fs, readFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, normalize, resolve, sep } from 'node:path'
@@ -44,7 +44,15 @@ const MIME = {
 
 
 function electronExecutable(editorRoot = EDITOR_ROOT) {
-  return join(editorRoot, 'node_modules', '.bin', process.platform === 'win32' ? 'electron.cmd' : 'electron')
+  const packageRoot = join(editorRoot, 'node_modules', 'electron')
+  const pathFile = join(packageRoot, 'path.txt')
+  if (!existsSync(pathFile)) return null
+
+  const executableName = readFileSync(pathFile, 'utf8').trim()
+  if (!executableName) return null
+  const distRoot = process.env.ELECTRON_OVERRIDE_DIST_PATH || join(packageRoot, 'dist')
+  const executable = join(distRoot, executableName)
+  return existsSync(executable) ? executable : null
 }
 
 function runProcess(command, args, options = {}) {
@@ -100,7 +108,12 @@ export async function buildSimulatorProject(document, options = {}) {
   const editorRoot = resolve(options.editorRoot ?? EDITOR_ROOT)
   const electron = options.electronExecutable ?? electronExecutable(editorRoot)
   const mainBundle = join(editorRoot, 'release', 'app', 'dist', 'main', 'main.js')
-  if (!existsSync(electron)) throw new HttpError(503, `OpenPLC Electron CLI is unavailable at ${electron}`)
+  if (!electron || !existsSync(electron)) {
+    throw new HttpError(
+      503,
+      'OpenPLC Electron runtime is unavailable; run npm run build:ces-web to repair/install it',
+    )
+  }
   if (!existsSync(mainBundle)) throw new HttpError(503, 'OpenPLC CLI bundle is missing; run npm run build:ces-web')
 
   const root = await fs.mkdtemp(join(tmpdir(), 'openplc-ces-simulator-'))

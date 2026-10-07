@@ -93,6 +93,14 @@ try {
     /simulator build timed out after 50 ms/,
   )
 
+  const missingElectronRoot = join(tempRoot, 'missing-electron-editor')
+  await fs.mkdir(join(missingElectronRoot, 'release', 'app', 'dist', 'main'), { recursive: true })
+  await fs.writeFile(join(missingElectronRoot, 'release', 'app', 'dist', 'main', 'main.js'), '// fake bundle\n')
+  await assert.rejects(
+    () => buildSimulatorProject(fakeDocument, { editorRoot: missingElectronRoot }),
+    /Electron runtime is unavailable; run npm run build:ces-web/,
+  )
+
   await withServer({
     bundledLibraryDir,
     simulationBuilder: async (document) => ({
