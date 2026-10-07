@@ -107,21 +107,27 @@ function runProcess(command, args, options = {}) {
 export async function buildSimulatorProject(document, options = {}) {
   const editorRoot = resolve(options.editorRoot ?? EDITOR_ROOT)
   const electron = options.electronExecutable ?? electronExecutable(editorRoot)
-  const mainBundle = join(editorRoot, 'release', 'app', 'dist', 'main', 'main.js')
+  // Use the dedicated development CLI bundle. Its webpack config deliberately
+  // bakes NODE_ENV=development and emits at the repository root so compiler
+  // paths resolve to <repo>/resources and <repo>/node_modules/strucpp. Running
+  // the production main bundle under the npm Electron runtime instead points
+  // CompilerModule at Electron's resourcesPath and fails on first-run files /
+  // arduino-cli before the simulator compiler can start.
+  const cliBundle = join(editorRoot, 'openplc-cli.dev.js')
   if (!electron || !existsSync(electron)) {
     throw new HttpError(
       503,
       'OpenPLC Electron runtime is unavailable; run npm run build:ces-web to repair/install it',
     )
   }
-  if (!existsSync(mainBundle)) throw new HttpError(503, 'OpenPLC CLI bundle is missing; run npm run build:ces-web')
+  if (!existsSync(cliBundle)) throw new HttpError(503, 'OpenPLC development CLI bundle is missing; run npm run build:ces-web')
 
   const root = await fs.mkdtemp(join(tmpdir(), 'openplc-ces-simulator-'))
   try {
     await writeProjectDirectory(root, document)
     const result = await runProcess(
       electron,
-      [mainBundle, '--cli', 'compile', root, '--target', SIMULATOR_TARGET, '--json'],
+      [cliBundle, '--cli', 'compile', root, '--target', SIMULATOR_TARGET, '--json'],
       { cwd: editorRoot, timeoutMs: options.simulatorBuildTimeoutMs ?? DEFAULT_SIMULATOR_BUILD_TIMEOUT_MS },
     )
     let payload = null

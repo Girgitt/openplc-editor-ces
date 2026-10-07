@@ -65,41 +65,43 @@ const getEdgePaths = (edge: FlowEdge, nodes: FlowNode[]) => {
  */
 
 const blockToXml = (node: BlockNode<BlockVariant>, rung: FBDRungState): BlockFbdXML => {
-  const inputVariables: BlockFbdXML['inputVariables']['variable'] = node.data.inputHandles
-    .flatMap((handle) => {
-      const edges = rung.edges.filter((edge) => edge.target === node.id && edge.targetHandle === handle.id)
-      /* istanbul ignore next -- defensive: Array.filter always returns an array */
-      if (!edges) return undefined
-
-      return edges.map((edge) => {
-        const sourceNode = rung.nodes.find((node) => node.id === edge.source)
+  // Every declared input handle is part of the block's PLCopen signature,
+  // whether or not it currently has a wire.  The old implementation emitted
+  // one <variable> only while iterating edges, so an unconnected RS.R1 (or any
+  // other optional/unwired pin) vanished on Save -> reopen.  Connections are
+  // optional state of a pin; they are not what makes the pin exist.
+  const inputVariables: BlockFbdXML['inputVariables']['variable'] = node.data.inputHandles.map((handle) => {
+    const connections = rung.edges
+      .filter((edge) => edge.target === node.id && edge.targetHandle === handle.id)
+      .map((edge) => {
+        const sourceNode = rung.nodes.find((candidate) => candidate.id === edge.source)
         if (!sourceNode) return undefined
 
         const path = getEdgePaths(edge, rung.nodes)
         if (!path) return undefined
 
         return {
-          '@formalParameter': handle.id || '',
-          connectionPointIn: {
-            relPosition: {
-              '@x': handle.relPosition.x || 0,
-              '@y': handle.relPosition.y || 0,
-            },
-            connection: [
-              {
-                '@refLocalId': (sourceNode.data as BasicNodeData).numericId,
-                '@formalParameter': sourceNode.type === 'block' ? (edge.sourceHandle as string) : undefined,
-                position: path.reverse().map((point) => ({
-                  '@x': point.x,
-                  '@y': point.y,
-                })),
-              },
-            ],
-          },
+          '@refLocalId': (sourceNode.data as BasicNodeData).numericId,
+          '@formalParameter': sourceNode.type === 'block' ? (edge.sourceHandle as string) : undefined,
+          position: path.reverse().map((point) => ({
+            '@x': point.x,
+            '@y': point.y,
+          })),
         }
       })
-    })
-    .filter((variable) => variable !== undefined)
+      .filter((connection) => connection !== undefined)
+
+    return {
+      '@formalParameter': handle.id || '',
+      connectionPointIn: {
+        relPosition: {
+          '@x': handle.relPosition.x || 0,
+          '@y': handle.relPosition.y || 0,
+        },
+        connection: connections,
+      },
+    }
+  })
 
   const outputVariable: BlockFbdXML['outputVariables']['variable'] = node.data.outputHandles
     .map((handle) => {

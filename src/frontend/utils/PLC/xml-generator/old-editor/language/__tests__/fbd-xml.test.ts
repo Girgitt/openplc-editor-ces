@@ -251,6 +251,66 @@ describe('fbdToXml (old-editor)', () => {
     expect(iv.connectionPointIn.connection[0]['@formalParameter']).toBeUndefined()
   })
 
+  it('preserves unconnected block input pins and their positions', () => {
+    const rung = makeRung({
+      nodes: [
+        {
+          id: 'rs1',
+          type: 'block',
+          position: { x: 200, y: 100 },
+          width: 100,
+          height: 90,
+          data: {
+            numericId: '20',
+            executionOrder: 0,
+            variant: { name: 'RS', type: 'function-block' },
+            variable: { name: 'RS1' },
+            handles: [],
+            inputHandles: [
+              {
+                id: 'S',
+                type: 'target',
+                position: 'left',
+                glbPosition: { x: 200, y: 125 },
+                relPosition: { x: 0, y: 25 },
+              },
+              {
+                id: 'R1',
+                type: 'target',
+                position: 'left',
+                glbPosition: { x: 200, y: 165 },
+                relPosition: { x: 0, y: 65 },
+              },
+            ],
+            outputHandles: [
+              {
+                id: 'Q1',
+                type: 'source',
+                position: 'right',
+                glbPosition: { x: 300, y: 145 },
+                relPosition: { x: 100, y: 45 },
+              },
+            ],
+            inputConnector: undefined,
+            outputConnector: undefined,
+            draggable: true,
+            selectable: true,
+            deletable: true,
+          },
+        } as unknown as Node,
+      ],
+    })
+
+    const result = fbdToXml(rung)
+    const inputs = result.body.FBD.block[0].inputVariables.variable
+
+    expect(inputs.map((pin) => pin['@formalParameter'])).toEqual(['S', 'R1'])
+    expect(inputs[0].connectionPointIn.relPosition).toEqual({ '@x': 0, '@y': 25 })
+    expect(inputs[1].connectionPointIn.relPosition).toEqual({ '@x': 0, '@y': 65 })
+    expect(inputs[0].connectionPointIn.connection).toEqual([])
+    expect(inputs[1].connectionPointIn.connection).toEqual([])
+  })
+
   it('block input from another block includes formalParameter', () => {
     const rung = makeRung({
       nodes: [

@@ -42,10 +42,10 @@ try {
   // JSON/artifact shape. This catches argument/path/artifact regressions in the
   // server-side orchestration itself.
   const fakeEditorRoot = join(tempRoot, 'fake-editor')
-  const fakeMain = join(fakeEditorRoot, 'release', 'app', 'dist', 'main', 'main.js')
+  const fakeCli = join(fakeEditorRoot, 'openplc-cli.dev.js')
   const fakeElectron = join(fakeEditorRoot, 'fake-electron')
-  await fs.mkdir(join(fakeEditorRoot, 'release', 'app', 'dist', 'main'), { recursive: true })
-  await fs.writeFile(fakeMain, '// fake bundle\n')
+  await fs.mkdir(fakeEditorRoot, { recursive: true })
+  await fs.writeFile(fakeCli, '// fake development CLI bundle\n')
   await fs.writeFile(
     fakeElectron,
     `#!/usr/bin/env node
@@ -94,8 +94,8 @@ try {
   )
 
   const missingElectronRoot = join(tempRoot, 'missing-electron-editor')
-  await fs.mkdir(join(missingElectronRoot, 'release', 'app', 'dist', 'main'), { recursive: true })
-  await fs.writeFile(join(missingElectronRoot, 'release', 'app', 'dist', 'main', 'main.js'), '// fake bundle\n')
+  await fs.mkdir(missingElectronRoot, { recursive: true })
+  await fs.writeFile(join(missingElectronRoot, 'openplc-cli.dev.js'), '// fake development CLI bundle\n')
   await assert.rejects(
     () => buildSimulatorProject(fakeDocument, { editorRoot: missingElectronRoot }),
     /Electron runtime is unavailable; run npm run build:ces-web/,
