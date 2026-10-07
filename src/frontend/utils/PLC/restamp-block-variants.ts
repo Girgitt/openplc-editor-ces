@@ -24,11 +24,12 @@ import type { PLCPou } from '@root/middleware/shared/ports/types'
  * reads. It is otherwise refreshed only by a layout pass that does not run on
  * load, so it is re-stamped here too.
  *
- * The refresh is intentionally type-only: it matches variables by name and
- * copies the type, leaving the pin set, ids, handles and wiring untouched. That
- * keeps extensible (variadic) blocks and existing connections intact while
- * still propagating type changes. A signature that gained or lost a pin needs
- * the node rebuilt, which stays the divergence badge's job.
+ * The refresh remains type-only for ordinary saved projects. PLCopen-imported
+ * blocks are the one exception: their variant arrives without a typed signature,
+ * so when that signature is hydrated from the authoritative definition we also
+ * reconcile the FBD handle set. This repairs transport-loss artifacts without
+ * silently applying interface changes to normal project-owned blocks; those
+ * still use the divergence/update workflow.
  */
 
 type VariantVariable = BlockVariant['variables'][number]
@@ -83,7 +84,42 @@ function userPouPinTypes(pou: PLCPou): PinTypes {
 }
 
 /** A minimal block-bearing node shape; both FBD and LD nodes satisfy it. */
-type BlockBearingNode = { type?: string; data?: { variant?: BlockVariant } }
+type RestampedHandle = {
+  id?: string
+  type: string
+  position?: string
+  glbPosition: { x: number; y: number }
+  relPosition: { x: number; y: number }
+  style?: Record<string, unknown>
+  [key: string]: unknown
+}
+
+type RestampedEdge = {
+  source?: string
+  sourceHandle?: string | null
+  target?: string
+  targetHandle?: string | null
+  [key: string]: unknown
+}
+
+/** A minimal block-bearing node shape; both FBD and LD nodes satisfy it. */
+type BlockBearingNode = {
+  id?: string
+  type?: string
+  position?: { x: number; y: number }
+  width?: number
+  height?: number
+  measured?: { width?: number; height?: number }
+  data?: {
+    variant?: BlockVariant
+    executionControl?: boolean
+    handles?: RestampedHandle[]
+    inputHandles?: RestampedHandle[]
+    outputHandles?: RestampedHandle[]
+    inputConnector?: RestampedHandle
+    outputConnector?: RestampedHandle
+  }
+}
 
 /** A ladder pin node: it caches the type of the block pin it connects to. */
 type PinBearingNode = {
@@ -93,10 +129,184 @@ type PinBearingNode = {
   }
 }
 
+const FBD_FIRST_PIN_Y = 48
+const FBD_PIN_STEP_Y = 48
+const FBD_PIN_FOOTER_Y = 24
+
+function expectedInputVariables(variant: BlockVariant, executionControl = false): VariantVariable[] {
+  return variant.variables.filter(
+    (variable) =>
+      (variable.class === 'input' || variable.class === 'inOut') &&
+      (variable.name !== 'EN' || executionControl),
+  )
+}
+
+function expectedOutputVariables(variant: BlockVariant, executionControl = false): VariantVariable[] {
+  return variant.variables.filter(
+    (variable) => variable.class === 'output' && (variable.name !== 'ENO' || executionControl),
+  )
+}
+
+function finite(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
+function sameHandleGeometry(a: RestampedHandle, b: RestampedHandle): boolean {
+  return (
+    a.id === b.id &&
+    a.type === b.type &&
+    a.position === b.position &&
+    a.relPosition.x === b.relPosition.x &&
+    a.relPosition.y === b.relPosition.y &&
+    a.glbPosition.x === b.glbPosition.x &&
+    a.glbPosition.y === b.glbPosition.y
+  )
+}
+
+function normalizedImportedHandles(
+  node: BlockBearingNode,
+  variables: VariantVariable[],
+  existingHandles: RestampedHandle[],
+  side: 'input' | 'output',
+): { handles: RestampedHandle[]; changed: number } {
+  const existingByName = new Map(
+    existingHandles.flatMap((handle) => (handle.id ? [[handle.id.toUpperCase(), handle] as const] : [])),
+  )
+  const usedY = new Set<number>()
+  const position = node.position ?? { x: 0, y: 0 }
+  let changed = 0
+
+  const handles = variables.map((variable, index) => {
+    const existing = existingByName.get(variable.name.toUpperCase())
+    let relY = existing && finite(existing.relPosition?.y) ? existing.relPosition.y : NaN
+    if (!finite(relY) || usedY.has(relY)) {
+      relY = FBD_FIRST_PIN_Y + index * FBD_PIN_STEP_Y
+      while (usedY.has(relY)) relY += FBD_PIN_STEP_Y
+    }
+    usedY.add(relY)
+
+    const defaultX = side === 'input' ? 0 : (node.width ?? 0)
+    const relX = existing && finite(existing.relPosition?.x) ? existing.relPosition.x : defaultX
+    const normalized: RestampedHandle = {
+      ...(existing ?? {}),
+      id: variable.name,
+      type: side === 'input' ? 'target' : 'source',
+      position: side === 'input' ? 'left' : 'right',
+      relPosition: { x: relX, y: relY },
+      glbPosition: { x: position.x + relX, y: position.y + relY },
+      style: {
+        ...(existing?.style ?? {}),
+        top: relY,
+        ...(side === 'input' ? { left: 0 } : { right: 0 }),
+      },
+    }
+    if (!existing || !sameHandleGeometry(existing, normalized)) changed += 1
+    return normalized
+  })
+
+  if (existingHandles.length !== handles.length) changed += Math.abs(existingHandles.length - handles.length)
+  else if (existingHandles.some((handle, index) => handle.id !== handles[index]?.id)) changed += 1
+
+  return { handles, changed }
+}
+
+/**
+ * PLCopen import constructs FBD handles from the pins present in the XML, while
+ * the later library restamp restores the authoritative block signature. If a
+ * previous transport lost a formal parameter (or collapsed two pins onto one
+ * coordinate), the block therefore ends up in an impossible half-state: labels
+ * come from the complete library signature while ReactFlow still carries a
+ * reduced/stacked handle set.
+ *
+ * Reconcile this only for a PLCopen-imported block whose variant arrived empty
+ * and was just hydrated from the current definition. Ordinary saved projects
+ * retain the explicit divergence/update workflow for interface changes.
+ */
+function reconcileHydratedFbdHandles(node: BlockBearingNode, edges: RestampedEdge[]): number {
+  const data = node.data
+  const variant = data?.variant
+  if (!data || !variant || !Array.isArray(data.inputHandles) || !Array.isArray(data.outputHandles)) return 0
+
+  let changed = 0
+  const inputVariables = expectedInputVariables(variant, data.executionControl === true)
+  const outputVariables = expectedOutputVariables(variant, data.executionControl === true)
+  const nextInputs = normalizedImportedHandles(node, inputVariables, data.inputHandles, 'input')
+  const nextOutputs = normalizedImportedHandles(node, outputVariables, data.outputHandles, 'output')
+  changed += nextInputs.changed + nextOutputs.changed
+
+  const nextHandles = [...nextInputs.handles, ...nextOutputs.handles]
+  const handlesChanged =
+    !Array.isArray(data.handles) ||
+    data.handles.length !== nextHandles.length ||
+    data.handles.some((handle, index) => !nextHandles[index] || !sameHandleGeometry(handle, nextHandles[index]))
+
+  if (nextInputs.changed > 0 || nextOutputs.changed > 0 || handlesChanged) {
+    data.inputHandles = nextInputs.handles
+    data.outputHandles = nextOutputs.handles
+    data.handles = nextHandles
+    data.inputConnector = nextInputs.handles[0]
+    data.outputConnector = nextOutputs.handles[0]
+    if (handlesChanged) changed += 1
+  }
+
+  // Match the minimum height used by the normal FBD block builder so a recovered
+  // lower pin cannot sit outside a block whose earlier transport had collapsed
+  // its signature.
+  const sideCount = Math.max(inputVariables.length, outputVariables.length)
+  if (sideCount > 0) {
+    const minimumHeight = FBD_FIRST_PIN_Y + FBD_PIN_FOOTER_Y + Math.max(sideCount - 1, 0) * FBD_PIN_STEP_Y
+    if (!finite(node.height) || node.height < minimumHeight) {
+      node.height = minimumHeight
+      if (node.measured) node.measured.height = minimumHeight
+      changed += 1
+    }
+  }
+
+  if (!node.id || inputVariables.length === 0) return changed
+
+  // A normal FBD block input accepts one source. Older CES round trips could
+  // collapse two distinct target pins onto the first imported handle. When the
+  // hydrated definition exposes an unused declared pin, preserve the first wire
+  // on its valid named pin and deterministically move duplicate/unknown incoming
+  // wires onto the missing pins in declaration order.
+  const expectedNames = inputVariables.map((variable) => variable.name)
+  const expectedByUpper = new Map(expectedNames.map((name) => [name.toUpperCase(), name]))
+  const occupied = new Set<string>()
+  const repair: RestampedEdge[] = []
+  for (const edge of edges) {
+    if (edge.target !== node.id) continue
+    const target = edge.targetHandle ? expectedByUpper.get(edge.targetHandle.toUpperCase()) : undefined
+    if (target && !occupied.has(target.toUpperCase())) {
+      occupied.add(target.toUpperCase())
+      if (edge.targetHandle !== target) {
+        edge.targetHandle = target
+        changed += 1
+      }
+      continue
+    }
+    repair.push(edge)
+  }
+
+  const available = expectedNames.filter((name) => !occupied.has(name.toUpperCase()))
+  for (const [index, edge] of repair.entries()) {
+    const target = available[index]
+    if (!target) break
+    if (edge.targetHandle !== target) {
+      edge.targetHandle = target
+      changed += 1
+    }
+    occupied.add(target.toUpperCase())
+  }
+
+  return changed
+}
+
 function restampBlockNodes(
   nodes: BlockBearingNode[],
+  edges: RestampedEdge[],
   libraryPousByName: Map<string, SystemLibrary['pous'][number]>,
   userPousByName: Map<string, PLCPou>,
+  repairImportedFbdHandles: boolean,
 ): number {
   let changed = 0
   for (const node of nodes) {
@@ -118,7 +328,8 @@ function restampBlockNodes(
     // those names, while the authoritative type/class signature comes from the
     // current library (or project-owned POU). Hydrate an imported empty variant
     // before the normal type-refresh pass.
-    if (variant.variables.length === 0) {
+    const hydratedImportedSignature = variant.variables.length === 0
+    if (hydratedImportedSignature) {
       if (libPou) {
         variant.variables = libPou.variables.map((variable) => ({
           ...variable,
@@ -143,6 +354,7 @@ function restampBlockNodes(
         variant.variables = restored as typeof variant.variables
       }
       changed += variant.variables.length
+      if (repairImportedFbdHandles) changed += reconcileHydratedFbdHandles(node, edges)
     }
 
     for (const variable of variant.variables) {
@@ -196,7 +408,7 @@ function restampPinNodes(nodes: Array<BlockBearingNode & PinBearingNode>): numbe
  * @returns how many types were refreshed, for the load-time console note.
  */
 export function restampFlowBlockVariants(
-  flows: Array<{ rung?: { nodes?: unknown }; rungs?: Array<{ nodes?: unknown }> }>,
+  flows: Array<{ rung?: { nodes?: unknown; edges?: unknown }; rungs?: Array<{ nodes?: unknown; edges?: unknown }> }>,
   systemLibraries: SystemLibrary[],
   userPous: PLCPou[],
 ): number {
@@ -210,7 +422,13 @@ export function restampFlowBlockVariants(
     for (const rung of rungs) {
       const nodes = rung?.nodes
       if (!Array.isArray(nodes)) continue
-      changed += restampBlockNodes(nodes as BlockBearingNode[], libraryPousByName, userPousByName)
+      changed += restampBlockNodes(
+        nodes as BlockBearingNode[],
+        Array.isArray(rung.edges) ? (rung.edges as RestampedEdge[]) : [],
+        libraryPousByName,
+        userPousByName,
+        flow.rung === rung,
+      )
       // After the blocks, so the pins copy the refreshed types.
       changed += restampPinNodes(nodes as Array<BlockBearingNode & PinBearingNode>)
     }

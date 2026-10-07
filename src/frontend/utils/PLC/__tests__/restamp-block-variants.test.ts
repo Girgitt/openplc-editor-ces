@@ -122,6 +122,151 @@ describe('restampFlowBlockVariants', () => {
     ])
   })
 
+
+
+  it('separates stacked PLCopen FBD handles while preserving their semantic target ports', () => {
+    const systemLibraries = [
+      {
+        name: 'STANDARD_FUNCTION_BLOCKS',
+        pous: [
+          {
+            name: 'RS',
+            type: 'function-block',
+            language: 'st',
+            body: '',
+            documentation: '',
+            variables: [
+              { name: 'S', class: 'input', type: { definition: 'base-type', value: 'BOOL' } },
+              { name: 'R1', class: 'input', type: { definition: 'base-type', value: 'BOOL' } },
+              { name: 'Q1', class: 'output', type: { definition: 'base-type', value: 'BOOL' } },
+            ],
+          },
+        ],
+      },
+    ] as unknown as SystemLibrary[]
+
+    const makeInput = (id: string) => ({
+      id,
+      type: 'target',
+      position: 'left',
+      glbPosition: { x: 200, y: 148 },
+      relPosition: { x: 0, y: 48 },
+      style: { top: 48, left: 0 },
+    })
+    const outputHandle = {
+      id: 'Q1',
+      type: 'source',
+      position: 'right',
+      glbPosition: { x: 300, y: 148 },
+      relPosition: { x: 100, y: 48 },
+      style: { top: 48, right: 0 },
+    }
+    const sHandle = makeInput('S')
+    const rHandle = makeInput('R1')
+    const node = {
+      id: 'rs-block',
+      type: 'block',
+      position: { x: 200, y: 100 },
+      width: 100,
+      height: 72,
+      data: {
+        variant: { name: 'RS', type: 'function-block', variables: [] },
+        handles: [sHandle, rHandle, outputHandle],
+        inputHandles: [sHandle, rHandle],
+        outputHandles: [outputHandle],
+        inputConnector: sHandle,
+        outputConnector: outputHandle,
+      },
+    }
+    const flow = {
+      rung: {
+        nodes: [node],
+        edges: [
+          { id: 'set', source: 'set-source', target: 'rs-block', sourceHandle: 'out', targetHandle: 'S' },
+          { id: 'reset', source: 'reset-source', target: 'rs-block', sourceHandle: 'out', targetHandle: 'R1' },
+        ],
+      },
+    }
+
+    restampFlowBlockVariants([flow], systemLibraries, [])
+
+    expect(node.data.inputHandles.map((handle) => handle.id)).toEqual(['S', 'R1'])
+    expect(node.data.inputHandles.map((handle) => handle.relPosition.y)).toEqual([48, 96])
+    expect(flow.rung.edges.map((edge) => edge.targetHandle)).toEqual(['S', 'R1'])
+    expect(node.height).toBeGreaterThanOrEqual(120)
+  })
+
+  it('repairs a hydrated PLCopen FBD block whose inputs collapsed onto one handle', () => {
+    const systemLibraries = [
+      {
+        name: 'STANDARD_FUNCTION_BLOCKS',
+        pous: [
+          {
+            name: 'RS',
+            type: 'function-block',
+            language: 'st',
+            body: '',
+            documentation: '',
+            variables: [
+              { name: 'S', class: 'input', type: { definition: 'base-type', value: 'BOOL' } },
+              { name: 'R1', class: 'input', type: { definition: 'base-type', value: 'BOOL' } },
+              { name: 'Q1', class: 'output', type: { definition: 'base-type', value: 'BOOL' } },
+            ],
+          },
+        ],
+      },
+    ] as unknown as SystemLibrary[]
+
+    const inputHandle = {
+      id: 'S',
+      type: 'target',
+      position: 'left',
+      glbPosition: { x: 200, y: 148 },
+      relPosition: { x: 0, y: 48 },
+      style: { top: 48, left: 0 },
+    }
+    const outputHandle = {
+      id: 'Q1',
+      type: 'source',
+      position: 'right',
+      glbPosition: { x: 300, y: 148 },
+      relPosition: { x: 100, y: 48 },
+      style: { top: 48, right: 0 },
+    }
+    const node = {
+      id: 'rs-block',
+      type: 'block',
+      position: { x: 200, y: 100 },
+      width: 100,
+      height: 120,
+      data: {
+        variant: { name: 'RS', type: 'function-block', variables: [] },
+        handles: [inputHandle, outputHandle],
+        inputHandles: [inputHandle],
+        outputHandles: [outputHandle],
+        inputConnector: inputHandle,
+        outputConnector: outputHandle,
+      },
+    }
+    const flow = {
+      rung: {
+        nodes: [node],
+        edges: [
+          { id: 'set', source: 'set-source', target: 'rs-block', sourceHandle: 'out', targetHandle: 'S' },
+          { id: 'reset', source: 'reset-source', target: 'rs-block', sourceHandle: 'out', targetHandle: 'S' },
+        ],
+      },
+    }
+
+    restampFlowBlockVariants([flow], systemLibraries, [])
+
+    expect(node.data.variant.variables.map((variable) => variable.name)).toEqual(['S', 'R1', 'Q1'])
+    expect(node.data.inputHandles.map((handle) => handle.id)).toEqual(['S', 'R1'])
+    expect(node.data.handles.filter((handle) => handle.type === 'target').map((handle) => handle.id)).toEqual(['S', 'R1'])
+    expect(node.data.inputHandles[0].relPosition.y).not.toBe(node.data.inputHandles[1].relPosition.y)
+    expect(flow.rung.edges.map((edge) => edge.targetHandle)).toEqual(['S', 'R1'])
+  })
+
   it('refreshes a stale library block return type (ADR ULINT -> __XWORD)', () => {
     const node = makeStaleAdrNode()
     const flow = { rung: { nodes: [node] } }

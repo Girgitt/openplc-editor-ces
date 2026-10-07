@@ -93,6 +93,25 @@ try {
     /simulator build timed out after 50 ms/,
   )
 
+
+  const failingElectron = join(fakeEditorRoot, 'failing-electron')
+  await fs.writeFile(
+    failingElectron,
+    `#!/usr/bin/env node\n` +
+      `process.stderr.write('FBD compile error: RS.R1 is not connected correctly\\nStopping compilation process.\\n');\n` +
+      `process.stdout.write(JSON.stringify({ok:false,error:{message:'Stopping compilation process.'}})+'\\n');\n` +
+      `process.exitCode=4;\n`,
+  )
+  await fs.chmod(failingElectron, 0o755)
+  await assert.rejects(
+    () => buildSimulatorProject(fakeDocument, { editorRoot: fakeEditorRoot, electronExecutable: failingElectron }),
+    (error) => {
+      assert.match(String(error), /FBD compile error: RS\.R1 is not connected correctly/)
+      assert.match(String(error), /Stopping compilation process\./)
+      return true
+    },
+  )
+
   const missingElectronRoot = join(tempRoot, 'missing-electron-editor')
   await fs.mkdir(missingElectronRoot, { recursive: true })
   await fs.writeFile(join(missingElectronRoot, 'openplc-cli.dev.js'), '// fake development CLI bundle\n')

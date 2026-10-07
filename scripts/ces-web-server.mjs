@@ -135,7 +135,19 @@ export async function buildSimulatorProject(document, options = {}) {
       throw new Error(`OpenPLC CLI returned invalid JSON: ${result.stdout.slice(0, 500)}`)
     }
     if (result.code !== 0 || payload?.ok !== true) {
-      const message = payload?.error?.message || result.stderr.trim() || `OpenPLC CLI exited with code ${result.code}`
+      // CLI progress/diagnostics are written to stderr even in JSON mode,
+      // while stdout carries only the final result document.  The final JSON
+      // error is often the intentionally generic "Stopping compilation
+      // process."; preferring it used to hide the useful compiler diagnostic
+      // that appeared one line earlier. Preserve the complete stderr report and
+      // append the structured message only when it adds information.
+      const stderrLines = result.stderr
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+      const structuredMessage = typeof payload?.error?.message === 'string' ? payload.error.message.trim() : ''
+      if (structuredMessage && !stderrLines.includes(structuredMessage)) stderrLines.push(structuredMessage)
+      const message = stderrLines.join('\n') || structuredMessage || `OpenPLC CLI exited with code ${result.code}`
       throw new Error(message)
     }
     const firmwarePath = typeof payload.firmwarePath === 'string' ? payload.firmwarePath : ''
