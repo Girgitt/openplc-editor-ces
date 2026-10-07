@@ -48,7 +48,20 @@ function validateSimulatorFbd(projectData: PLCProjectData): void {
   for (const pou of projectData.pous) {
     if (pou.body.language !== 'fbd') continue
     const value = pou.body.value as { rung?: Parameters<typeof validateFbdRung>[0] } | undefined
-    if (value?.rung) validateFbdRung(value.rung)
+    if (value?.rung) {
+      validateFbdRung(value.rung)
+      // A valid wire-to-pin ID alone is not sufficient. The ST emitter uses
+      // variant.variables for the FB call arguments, and silently emits RS0()
+      // if the imported block signature is still empty. Refuse that build.
+      for (const node of value.rung.nodes) {
+        if (node.type !== 'block') continue
+        const signature = (node.data as { variant?: { variables?: unknown[] } }).variant?.variables
+        const connected = value.rung.edges.some((edge) => edge.target === node.id)
+        if (connected && (!Array.isArray(signature) || signature.length === 0)) {
+          throw new Error(`POU "${pou.name}": block "${node.id}" has connected pins but no typed signature; reload block definitions before simulation.`)
+        }
+      }
+    }
   }
 }
 

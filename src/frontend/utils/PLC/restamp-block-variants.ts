@@ -438,3 +438,36 @@ export function restampFlowBlockVariants(
   }
   return changed
 }
+
+/**
+ * Hydrate the authoritative project POU bodies BEFORE they are installed in
+ * the project store. PLCopen carries the visible FBD pins and edges but not the
+ * placed block's typed variant.variables signature. If only the separate
+ * FBD/LD canvas flow is re-stamped, saving/building from project.data.pous
+ * compiles the unhydrated block as RS0() even though the wires render correctly.
+ *
+ * Keep the project model and canvas seeded from the same hydrated body. Do not
+ * mutate parser-owned input or mark a previously saved project as edited: this
+ * is restoration of definition data, not a user change.
+ */
+export function hydrateLoadedGraphicalPous(
+  pous: PLCPou[],
+  systemLibraries: SystemLibrary[],
+): { pous: PLCPou[]; changed: number } {
+  const userPous = pous.filter((pou) => pou.pouType !== 'program')
+  let changed = 0
+  const hydratedPous = pous.map((pou) => {
+    if (pou.body.language !== 'fbd' && pou.body.language !== 'ld') return pou
+    // PLCProjectData leaves graphical body.value typed as `unknown`. The
+    // fbd/ld language check above narrows the semantic format but not that
+    // TypeScript field, so establish the structural flow shape explicitly.
+    const bodyValue = structuredClone(pou.body.value)
+    if (!bodyValue || typeof bodyValue !== 'object' || Array.isArray(bodyValue)) return pou
+    const flow = bodyValue as Parameters<typeof restampFlowBlockVariants>[0][number]
+    const refreshed = restampFlowBlockVariants([flow], systemLibraries, userPous)
+    if (!refreshed) return pou
+    changed += refreshed
+    return { ...pou, body: { ...pou.body, value: bodyValue } } as PLCPou
+  })
+  return { pous: hydratedPous, changed }
+}

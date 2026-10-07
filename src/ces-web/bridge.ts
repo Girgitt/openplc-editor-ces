@@ -1,5 +1,7 @@
 import { generatePlcopenXml } from '../frontend/services/export-actions'
+import { buildAllProjectFileContentsPure } from '../frontend/services/save-actions'
 import { openPLCStoreBase } from '../frontend/store'
+import type { WriteProjectFiles } from '../middleware/shared/ports/project-port'
 import type { BoardInfo } from '../middleware/shared/ports/types'
 import { cesApi } from './api'
 
@@ -111,7 +113,29 @@ async function saveProjectFiles(files: unknown): Promise<{ success: boolean; err
       // The raw editor project is transient build input only. CES canonical PLCopen
       // remains the persistence authority; M5-3 uses this snapshot exclusively to
       // invoke the existing OpenPLC simulator compiler.
-      await cesApi('/api/simulator/project', { method: 'POST', body: JSON.stringify(files) })
+      // `files` may contain byte-identical raw fallbacks for untouched POUs
+      // (version-control's preservation contract). Those bytes can predate
+      // PLCopen block-signature hydration: a freshly opened FBD still draws
+      // S/R1 wires, but its raw compiler input emits RS0() with no arguments.
+      // Feed the simulator the fresh, hydrated POU serialization instead. This
+      // is a transient build snapshot; do NOT change canonical-save or the
+      // version-control raw-file preservation behavior.
+      const fresh = buildAllProjectFileContentsPure()
+      const pending = files as WriteProjectFiles
+      const simulatorFiles: WriteProjectFiles = {
+        ...pending,
+        // Preserve the original payload shape when callers supply no POU list.
+        ...(Array.isArray(pending.pouFiles) ? {
+          pouFiles: pending.pouFiles.map((entry) => {
+            const content = fresh[entry.relativePath]
+            if (content === undefined) {
+              throw new Error(`Cannot build simulator: current serialization is missing for POU ${entry.relativePath}.`)
+            }
+            return { ...entry, content }
+          }),
+        } : {}),
+      }
+      await cesApi('/api/simulator/project', { method: 'POST', body: JSON.stringify(simulatorFiles) })
       return { success: true }
     }
     await cesApi('/api/document/save', { method: 'POST', body: JSON.stringify(files) })

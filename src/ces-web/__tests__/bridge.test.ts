@@ -10,6 +10,11 @@ vi.mock('../../frontend/services/export-actions', () => ({
   generatePlcopenXml: (...args: unknown[]) => mockGeneratePlcopenXml(...args),
 }))
 
+const mockBuildFresh = vi.fn()
+vi.mock('../../frontend/services/save-actions', () => ({
+  buildAllProjectFileContentsPure: () => mockBuildFresh(),
+}))
+
 const projectData = { pous: [] }
 vi.mock('../../frontend/store', () => ({
   openPLCStoreBase: {
@@ -22,6 +27,7 @@ import { installCesWebBridge } from '../bridge'
 beforeEach(() => {
   vi.clearAllMocks()
   mockGeneratePlcopenXml.mockReturnValue({ success: true, xml: '<project/>' })
+  mockBuildFresh.mockReturnValue({})
   mockCesApi.mockResolvedValue({ success: true })
 })
 
@@ -42,6 +48,40 @@ describe('CES embedded editor canonical save bridge', () => {
       method: 'POST',
       body: JSON.stringify({ projectPath: '/ces-session' }),
     })
+  })
+
+  it('compiles the hydrated POU instead of byte-preserved pre-hydration raw content', async () => {
+    window.history.replaceState({}, '', '/api/v1/projects/p/editor-sessions/s/proxy/')
+    installCesWebBridge()
+    const path = 'pous/programs/test-fbd-3.fbd'
+    const raw = '{"body":"RS0()"}'
+    const hydrated = '{"body":"RS0(S := v1, R1 := v2)"}'
+    mockBuildFresh.mockReturnValue({ [path]: hydrated })
+    const input = { projectPath: '/ces-session', pouFiles: [{ relativePath: path, content: raw }] }
+
+    const result = await window.bridge.writeProjectFiles(input as never)
+    expect(result).toEqual({ success: true })
+    expect(mockCesApi).toHaveBeenNthCalledWith(1, '../canonical-save', {
+      method: 'POST', body: JSON.stringify({ xml: '<project/>' }),
+    })
+    expect(mockCesApi).toHaveBeenNthCalledWith(2, '/api/simulator/project', {
+      method: 'POST', body: JSON.stringify({ ...input, pouFiles: [{ relativePath: path, content: hydrated }] }),
+    })
+    // The original save payload remains unmodified for raw-file preservation.
+    expect(input.pouFiles[0].content).toBe(raw)
+  })
+
+  it('refuses stale raw POU content when fresh serialization is unavailable', async () => {
+    window.history.replaceState({}, '', '/api/v1/projects/p/editor-sessions/s/proxy/')
+    installCesWebBridge()
+    const input = { projectPath: '/ces-session', pouFiles: [{ relativePath: 'pous/programs/test-fbd-3.fbd', content: 'RS0()' }] }
+
+    await expect(window.bridge.writeProjectFiles(input as never)).resolves.toEqual({
+      success: false,
+      error: expect.stringContaining('current serialization is missing'),
+    })
+    expect(mockCesApi).toHaveBeenCalledTimes(1)
+    expect(mockCesApi).toHaveBeenCalledWith('../canonical-save', expect.any(Object))
   })
 
   it('does not update the transient document when canonical save is rejected', async () => {

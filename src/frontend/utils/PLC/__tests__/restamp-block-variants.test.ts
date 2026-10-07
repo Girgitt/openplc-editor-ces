@@ -1,7 +1,7 @@
 import type { PLCVariable } from '../../../../middleware/shared/ports/types'
 import type { SystemLibrary } from '../../../../middleware/shared/ports/library-types'
 import { syncNodesWithVariables } from '../../graphical/sync-nodes-with-variables'
-import { restampFlowBlockVariants } from '../restamp-block-variants'
+import { hydrateLoadedGraphicalPous, restampFlowBlockVariants } from '../restamp-block-variants'
 
 // ---------------------------------------------------------------------------
 // Factory helpers
@@ -620,5 +620,59 @@ describe('DOPE-548 — a user FB pin type change must not break a linked variabl
     // Without the re-stamp the pin still reads OLDSTRUCT and the node is
     // replaced by a broken-… payload flagged wrongVariable.
     expect(updateNodes).not.toHaveBeenCalled()
+  })
+})
+
+describe('CES PLCopen project-load hydration', () => {
+  it('hydrates the authoritative POU body, not only the displayed canvas graph', () => {
+    // The PLCopen importer knows the RS pin names/edges but not typed block
+    // variant.variables. The ST compiler reads those variables from the POU.
+    const pin = (id: string, type: string, y: number) => ({
+      id, type, position: type === 'target' ? 'left' : 'right',
+      relPosition: { x: type === 'target' ? 0 : 90, y },
+      glbPosition: { x: type === 'target' ? 200 : 290, y },
+    })
+    const source = (id: string, name: string) => ({
+      id, type: 'input-variable', position: { x: 10, y: 10 },
+      data: { numericId: id, variable: { name }, variant: 'input-variable',
+        outputHandles: [pin('output-variable', 'source', 16)], inputHandles: [] },
+    })
+    const imported = {
+      name: 'test-fbd-3', pouType: 'program',
+      body: { language: 'fbd', value: { name: 'test-fbd-3', updated: false,
+        rung: { comment: '', selectedNodes: [], nodes: [
+          source('INPUT-VARIABLE-1', 'v1'), source('INPUT-VARIABLE-2', 'v2'),
+          { id: 'BLOCK-3', type: 'block', position: { x: 200, y: 10 }, width: 90, height: 120,
+            data: { numericId: '3', variable: { name: 'RS0' }, executionControl: false,
+              variant: { name: 'RS', type: 'function-block', variables: [] },
+              inputHandles: [pin('S', 'target', 48), pin('R1', 'target', 96)],
+              outputHandles: [pin('Q1', 'source', 48)] } },
+        ], edges: [
+          { id: 's', source: 'INPUT-VARIABLE-1', sourceHandle: 'output-variable', target: 'BLOCK-3', targetHandle: 'S' },
+          { id: 'r', source: 'INPUT-VARIABLE-2', sourceHandle: 'output-variable', target: 'BLOCK-3', targetHandle: 'R1' },
+        ] } } },
+    }
+    const libraries = [{ name: 'STANDARD_FUNCTION_BLOCKS', pous: [{
+      name: 'RS', type: 'function-block', variables: [
+        { name: 'S', class: 'input', type: { definition: 'base-type', value: 'BOOL' } },
+        { name: 'R1', class: 'input', type: { definition: 'base-type', value: 'BOOL' } },
+        { name: 'Q1', class: 'output', type: { definition: 'base-type', value: 'BOOL' } },
+      ],
+    }] }] as unknown as SystemLibrary[]
+
+    const { pous, changed } = hydrateLoadedGraphicalPous(
+      [imported] as unknown as Parameters<typeof hydrateLoadedGraphicalPous>[0], libraries,
+    )
+    expect(changed).toBeGreaterThan(0)
+    const body = pous[0].body.value as typeof imported.body.value
+    const rs = body.rung.nodes[2] as { data: { variant: { variables: Array<{ name: string; class: string }> } } }
+    expect(rs.data.variant.variables.map((v: { name: string; class: string }) => [v.name, v.class])).toEqual([
+      ['S', 'input'], ['R1', 'input'], ['Q1', 'output'],
+    ])
+    expect(body.rung.edges.map((e) => [e.sourceHandle, e.targetHandle])).toEqual([
+      ['output-variable', 'S'], ['output-variable', 'R1'],
+    ])
+    // Hydration must not rewrite the imported canonical representation.
+    expect((imported.body.value.rung.nodes[2].data.variant as { variables: unknown[] }).variables).toEqual([])
   })
 })

@@ -13,7 +13,7 @@ import { syncNodesWithVariables, syncNodesWithVariablesFBD } from '../../../util
 import { isLegalIdentifier } from '../../../utils/keywords'
 import { newUuid } from '../../../utils/new-uuid'
 import { findGlobalVariableListReferences } from '../../../utils/PLC/global-variable-list-references'
-import { restampFlowBlockVariants } from '../../../utils/PLC/restamp-block-variants'
+import { hydrateLoadedGraphicalPous, restampFlowBlockVariants } from '../../../utils/PLC/restamp-block-variants'
 import { normalizeOneVariablePerLine } from '../../../utils/PLC/variable-declarations'
 import { carryEditorMetadata } from '../../../utils/PLC/variable-metadata'
 import { generateUniqueSlaveName, type NameTaken } from '../../../utils/unique-slave-name'
@@ -975,10 +975,16 @@ const createSharedSlice: StateCreator<SharedRootState, [], [], SharedSlice> = (s
         }
       }
 
+      // PLCopen imports restore graphical wires but not typed block signatures.
+      // Hydrate the POU bodies *before* putting them into the authoritative
+      // project store. Re-stamping only the canvas flows makes the graph look
+      // connected while the compiler reads RS0() from project.data.pous.
+      const hydrated = hydrateLoadedGraphicalPous(data.projectData.pous, getState().libraries.system)
+      const loadedProjectData = { ...data.projectData, pous: hydrated.pous }
       // Set project data (setting meta.path triggers navigation from start to workspace)
       getState().projectActions.setProject({
         meta: data.meta,
-        data: data.projectData,
+        data: loadedProjectData,
       })
       // Raw .dt files that failed to parse — stashed so saves echo
       // them back verbatim; always set so a reopen clears stale ones.
@@ -1005,7 +1011,7 @@ const createSharedSlice: StateCreator<SharedRootState, [], [], SharedSlice> = (s
 
       // Key flows under `pou.name`, not the flow's own embedded `name`: a drift between the two renders an empty
       // canvas.
-      const pous = data.projectData.pous
+      const pous = loadedProjectData.pous
 
       // Refresh placed block variant types before the flows enter the store, so
       // existing projects pick up library type changes (e.g. ADR: ULINT ->
@@ -1013,7 +1019,7 @@ const createSharedSlice: StateCreator<SharedRootState, [], [], SharedSlice> = (s
       const systemLibraries = getState().libraries.system
       const userPous = pous.filter((pou) => pou.pouType !== 'program')
       const userPouNames = userPous.map((pou) => pou.name.toUpperCase())
-      let restampedCount = 0
+      let restampedCount = hydrated.changed
       // Blocks still on the old two-sided VAR_IN_OUT pin are counted, never converted: the fix belongs to the
       // block's update badge, and only project-owned blocks can show one.
       const convertibleInOutPous = new Set<string>()
