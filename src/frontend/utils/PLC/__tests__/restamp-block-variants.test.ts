@@ -196,6 +196,91 @@ describe('restampFlowBlockVariants', () => {
     expect(node.height).toBeGreaterThanOrEqual(120)
   })
 
+  it('installs render positions on parser-shaped PLCopen handles that already have distinct geometry', () => {
+    const systemLibraries = [
+      {
+        name: 'STANDARD_FUNCTION_BLOCKS',
+        pous: [
+          {
+            name: 'RS',
+            type: 'function-block',
+            language: 'st',
+            body: '',
+            documentation: '',
+            variables: [
+              { name: 'S', class: 'input', type: { definition: 'base-type', value: 'BOOL' } },
+              { name: 'R1', class: 'input', type: { definition: 'base-type', value: 'BOOL' } },
+              { name: 'Q1', class: 'output', type: { definition: 'base-type', value: 'BOOL' } },
+            ],
+          },
+        ],
+      },
+    ] as unknown as SystemLibrary[]
+
+    // XML parsing reconstructs the semantic geometry but not ReactFlow's CSS
+    // placement. M5-3 used to calculate these styles and then discard them
+    // because its equality test ignored style, leaving S/R1 visually stacked.
+    const sHandle = {
+      id: 'S',
+      type: 'target',
+      position: 'left',
+      glbPosition: { x: 200, y: 148 },
+      relPosition: { x: 0, y: 48 },
+      style: undefined,
+    }
+    const rHandle = {
+      id: 'R1',
+      type: 'target',
+      position: 'left',
+      glbPosition: { x: 200, y: 196 },
+      relPosition: { x: 0, y: 96 },
+      style: undefined,
+    }
+    const outputHandle = {
+      id: 'Q1',
+      type: 'source',
+      position: 'right',
+      glbPosition: { x: 300, y: 148 },
+      relPosition: { x: 100, y: 48 },
+      style: undefined,
+    }
+    const node = {
+      id: 'rs-block',
+      type: 'block',
+      position: { x: 200, y: 100 },
+      width: 100,
+      height: 120,
+      data: {
+        variant: { name: 'RS', type: 'function-block', variables: [] },
+        handles: [sHandle, rHandle, outputHandle],
+        inputHandles: [sHandle, rHandle],
+        outputHandles: [outputHandle],
+        inputConnector: undefined,
+        outputConnector: undefined,
+      },
+    }
+    const flow = {
+      rung: {
+        nodes: [node],
+        edges: [
+          { id: 'set', source: 'set-source', target: 'rs-block', sourceHandle: 'out', targetHandle: 'S' },
+          { id: 'reset', source: 'reset-source', target: 'rs-block', sourceHandle: 'out', targetHandle: 'R1' },
+        ],
+      },
+    }
+
+    restampFlowBlockVariants([flow], systemLibraries, [])
+
+    expect(node.data.inputHandles.map((handle) => handle.id)).toEqual(['S', 'R1'])
+    expect(node.data.inputHandles.map((handle) => handle.style)).toEqual([
+      { top: 48, left: 0 },
+      { top: 96, left: 0 },
+    ])
+    expect(node.data.outputHandles[0].style).toEqual({ top: 48, right: 0 })
+    expect(node.data.handles.map((handle) => handle.style?.top)).toEqual([48, 96, 48])
+    expect(flow.rung.edges.map((edge) => edge.targetHandle)).toEqual(['S', 'R1'])
+  })
+
   it('repairs a hydrated PLCopen FBD block whose inputs collapsed onto one handle', () => {
     const systemLibraries = [
       {

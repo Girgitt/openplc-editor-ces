@@ -147,32 +147,43 @@ function parseBlockXml(entry: Record<string, unknown>): { node: BlockNode<BlockV
   return { node, pendingEdges }
 }
 
+function centeredVariableHandle(
+  id: string,
+  kind: 'source' | 'target',
+  side: Position.Left | Position.Right,
+  position: { x: number; y: number },
+  width: number,
+  height: number,
+) {
+  const x = side === Position.Right ? width : 0
+  const y = height / 2
+  return makeHandle(id, kind, side, position, { '@x': String(x), '@y': String(y) })
+}
+
 function parseInVariableXml(entry: Record<string, unknown>): VariableNode {
   const numericId = asString(entry['@localId'])
   const position = parsePositionXml(entry.position)
-  const xmlWidth = toNumber(entry['@width'])
-  const width = clampImportedVariableWidth(xmlWidth)
-  const xmlOutputHandle = makeHandle(
+  const width = clampImportedVariableWidth(toNumber(entry['@width']))
+  const height = toNumber(entry['@height'])
+  // Variable nodes have one semantic connector on each applicable edge. Its
+  // position is not user-editable, so normalise it to the vertical centre on
+  // import instead of preserving stale PLCopen geometry from older editor
+  // builds (which could place a source handle at the upper-right corner).
+  const outputHandle = centeredVariableHandle(
     LEAF_OUTPUT_HANDLE_ID,
     'source',
     Position.Right,
     position,
-    asRecord(entry.connectionPointOut).relPosition,
+    width,
+    height,
   )
-  // The output pin sits on the right edge, so it moves with a widened box.
-  const widening = width - xmlWidth
-  const outputHandle = {
-    ...xmlOutputHandle,
-    relPosition: { ...xmlOutputHandle.relPosition, x: xmlOutputHandle.relPosition.x + widening },
-    glbPosition: { ...xmlOutputHandle.glbPosition, x: xmlOutputHandle.glbPosition.x + widening },
-  }
 
   return {
     id: `INPUT-VARIABLE-${numericId}`,
     type: 'input-variable',
     position,
     width,
-    height: toNumber(entry['@height']),
+    height,
     draggable: true,
     selectable: true,
     data: {
@@ -197,7 +208,16 @@ function parseOutVariableXml(entry: Record<string, unknown>): { node: VariableNo
   const numericId = asString(entry['@localId'])
   const position = parsePositionXml(entry.position)
   const connIn = asRecord(entry.connectionPointIn)
-  const inputHandle = makeHandle(LEAF_INPUT_HANDLE_ID, 'target', Position.Left, position, connIn.relPosition)
+  const width = clampImportedVariableWidth(toNumber(entry['@width']))
+  const height = toNumber(entry['@height'])
+  const inputHandle = centeredVariableHandle(
+    LEAF_INPUT_HANDLE_ID,
+    'target',
+    Position.Left,
+    position,
+    width,
+    height,
+  )
   const pendingEdges = asArray(connIn.connection).map((connRaw) =>
     parseConnectionXml(connRaw, numericId, LEAF_INPUT_HANDLE_ID),
   )
@@ -206,8 +226,8 @@ function parseOutVariableXml(entry: Record<string, unknown>): { node: VariableNo
     id: `OUTPUT-VARIABLE-${numericId}`,
     type: 'output-variable',
     position,
-    width: clampImportedVariableWidth(toNumber(entry['@width'])),
-    height: toNumber(entry['@height']),
+    width,
+    height,
     draggable: true,
     selectable: true,
     data: {

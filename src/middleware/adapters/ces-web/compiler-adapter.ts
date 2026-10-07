@@ -1,5 +1,11 @@
+import { openPLCStoreBase } from '@root/frontend/store'
 import type { CompilerPort } from '@root/middleware/shared/ports/compiler-port'
-import type { CompileProgressEvent, CompileResult, DebugCompileResult } from '@root/middleware/shared/ports/types'
+import type {
+  CompileProgressEvent,
+  CompileResult,
+  DebugCompileResult,
+  PLCProjectData,
+} from '@root/middleware/shared/ports/types'
 
 import { cesApi } from './http'
 import { cesWebSimulationRuntime, type CesSimulatorBuildArtifacts } from './simulation-runtime'
@@ -15,6 +21,24 @@ type BuildResponse = CesSimulatorBuildArtifacts & {
 
 function progress(onProgress: (event: CompileProgressEvent) => void, event: CompileProgressEvent): void {
   onProgress(event)
+}
+
+function installSimulatorDebugInstanceOverlay(projectData: PLCProjectData): void {
+  const actions = openPLCStoreBase.getState().workspaceActions
+  const persistedInstances = projectData.configurations.resource.instances
+  if (persistedInstances.length > 0) {
+    actions.setDebugInstanceOverlay(null)
+    return
+  }
+
+  // The CES build host synthesises exactly one cyclic simulator instance when
+  // the engineering project intentionally contains no OpenPLC runtime schedule.
+  // Mirror that schedule only for the debugger, using the logical/editor POU
+  // name rather than any IEC-safe alias used inside the transient build copy.
+  const rootProgram = projectData.pous.find((pou) => pou.pouType === 'program')
+  actions.setDebugInstanceOverlay(
+    rootProgram ? [{ name: 'instance0', program: rootProgram.name, task: 'task0' }] : null,
+  )
 }
 
 async function build(onProgress: (event: CompileProgressEvent) => void): Promise<BuildResponse> {
@@ -35,7 +59,9 @@ export function createCesWebCompilerAdapter(): CompilerPort {
         return { success: false, error: `CES web M5-3 supports only ${SIMULATOR_BOARD}; got ${args.boardTarget || '(none)'}.` }
       }
       try {
+        openPLCStoreBase.getState().workspaceActions.setDebugInstanceOverlay(null)
         const result = await build(onProgress)
+        installSimulatorDebugInstanceOverlay(args.projectData)
         progress(onProgress, {
           stage: 'done',
           message: 'OpenPLC Simulator firmware built.',
@@ -55,7 +81,9 @@ export function createCesWebCompilerAdapter(): CompilerPort {
         return { success: false, error: `CES web M5-3 supports debug compilation only for ${SIMULATOR_BOARD}.` }
       }
       try {
+        openPLCStoreBase.getState().workspaceActions.setDebugInstanceOverlay(null)
         const result = await build(onProgress)
+        installSimulatorDebugInstanceOverlay(args.projectData)
         return { success: true, debugContent: result.debugMap, md5: result.md5 }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)

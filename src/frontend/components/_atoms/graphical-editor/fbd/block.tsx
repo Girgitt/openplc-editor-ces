@@ -1,3 +1,4 @@
+import { useUpdateNodeInternals } from '@xyflow/react'
 import { FocusEvent, memo, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { PLCVariable } from '../../../../../middleware/shared/ports/types'
@@ -388,6 +389,45 @@ const Block = <T extends object>(block: BlockProps<T>) => {
   const flow = useOpenPLCStore((state) => state.fbdFlows.find((f) => f.name === pouName))
   const { type: blockType, name: blockVariantName } = (data.variant as BlockVariant) ?? DEFAULT_BLOCK_TYPE
   const documentation = getBlockDocumentation(data.variant as BlockVariant)
+  const updateNodeInternals = useUpdateNodeInternals()
+
+  // `handles` is a convenience union used by old saved diagrams. The input/output
+  // arrays are the authoritative pin sets (and are what the XML writer persists),
+  // so prefer them for rendering as well. This also protects a hydrated PLCopen
+  // block from a stale combined array left by an earlier editor revision.
+  const renderHandles = useMemo(() => {
+    const splitHandles = [...(data.inputHandles ?? []), ...(data.outputHandles ?? [])]
+    return splitHandles.length > 0 ? splitHandles : data.handles
+  }, [data.handles, data.inputHandles, data.outputHandles])
+
+  // ReactFlow caches handle bounds per node. During CES project load the FBD body
+  // can first mount from the pre-hydration rung and then receive the library-restamped
+  // pin set (for example RS: S/R1/Q1). A normal React re-render is not enough: a
+  // Handle that was reused under an array-index key can remain registered under its
+  // previous id/type/position. Build a semantic signature and explicitly ask ReactFlow
+  // to rescan whenever the dynamic interface changes.
+  const handleLayoutSignature = useMemo(
+    () =>
+      renderHandles
+        .map((handle) =>
+          [
+            handle.type,
+            handle.id ?? '',
+            handle.position,
+            handle.relPosition?.x ?? '',
+            handle.relPosition?.y ?? '',
+            handle.style?.top ?? '',
+            handle.style?.left ?? '',
+            handle.style?.right ?? '',
+          ].join(':'),
+        )
+        .join('|'),
+    [renderHandles],
+  )
+
+  useEffect(() => {
+    updateNodeInternals(id)
+  }, [handleLayoutSignature, height, id, updateNodeInternals, width])
 
   const [blockVariableValue, setBlockVariableValue] = useState<string>('')
   const [wrongVariable, setWrongVariable] = useState<boolean>(false)
@@ -918,9 +958,9 @@ const Block = <T extends object>(block: BlockProps<T>) => {
           />
         )}
       </div>
-      {data.handles.map((handle, index) => (
+      {renderHandles.map((handle) => (
         <CustomHandle
-          key={index}
+          key={`${handle.type}:${handle.id ?? 'anonymous'}:${handle.position}`}
           {...handle}
           // A diagram saved before VAR_IN_OUT became input-only still carries the pin's output
           // side, and this list is what actually renders. Keep drawing it so the existing wire

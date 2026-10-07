@@ -36,6 +36,43 @@ describe('parseFbdXml', () => {
     expect(node.data.variable).toEqual({ name: 'X1' })
     expect(node.data.negated).toBe(false)
     expect(node.data.outputHandles[0].id).toBe('output-variable')
+    expect(node.data.outputHandles[0].relPosition).toEqual({ x: 80, y: 15 })
+    expect(node.data.outputHandles[0].style).toEqual({ top: 15, right: 0 })
+  })
+
+  it('repairs stale variable connector geometry to the centre of its edge', () => {
+    const { body } = parseFbdXml('p', {
+      inVariable: [
+        {
+          '@localId': '1',
+          '@executionOrderId': '0',
+          '@width': '80',
+          '@height': '32',
+          '@negated': 'false',
+          position: { '@x': '10', '@y': '20' },
+          connectionPointOut: { relPosition: { '@x': '80', '@y': '0' } },
+          expression: 'Source',
+        },
+      ],
+      outVariable: [
+        {
+          '@localId': '2',
+          '@executionOrderId': '1',
+          '@width': '80',
+          '@height': '32',
+          '@negated': 'false',
+          position: { '@x': '200', '@y': '20' },
+          connectionPointIn: { relPosition: { '@x': '0', '@y': '0' } },
+          expression: 'Sink',
+        },
+      ],
+    })
+    const [source, sink] = body.rung.nodes as VariableNode[]
+
+    expect(source.data.outputConnector?.relPosition).toEqual({ x: 80, y: 16 })
+    expect(source.data.outputConnector?.style).toEqual({ top: 16, right: 0 })
+    expect(sink.data.inputConnector?.relPosition).toEqual({ x: 0, y: 16 })
+    expect(sink.data.inputConnector?.style).toEqual({ top: 16, left: 0 })
   })
 
   it('widens an imported variable box narrower than the minimum, moving the output pin with it', () => {

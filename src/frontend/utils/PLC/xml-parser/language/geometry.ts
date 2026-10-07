@@ -29,6 +29,15 @@ export interface HandleGeometry {
   position: Position
   glbPosition: XyPosition
   relPosition: XyPosition
+  // React Flow positions handles from CSS, not from our PLCopen relPosition
+  // bookkeeping. Imported handles therefore need the same explicit edge/top
+  // style that freshly-created graphical nodes receive.
+  style: {
+    top?: number
+    right?: number
+    bottom?: number
+    left?: number
+  }
 }
 
 // glbPosition (absolute canvas coordinates) never appears in PLCopen XML —
@@ -43,11 +52,21 @@ export function makeHandle(
   relPositionXml: unknown,
 ): HandleGeometry {
   const relPosition = parsePositionXml(relPositionXml)
+  const style =
+    side === Position.Left
+      ? { top: relPosition.y, left: 0 }
+      : side === Position.Right
+        ? { top: relPosition.y, right: 0 }
+        : side === Position.Top
+          ? { top: 0, left: relPosition.x }
+          : { bottom: 0, left: relPosition.x }
+
   return {
     id,
     type: kind,
     position: side,
     relPosition,
     glbPosition: { x: nodePosition.x + relPosition.x, y: nodePosition.y + relPosition.y },
+    style,
   }
 }

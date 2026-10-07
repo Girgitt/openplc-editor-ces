@@ -256,7 +256,12 @@ async function executeBuild(request: BuildRequest, reporter: Reporter): Promise<
       boardTarget: target,
       // The alias-resolved snapshot, from the same store action the button uses.
       projectData: project.compileReady,
-      compileOnly: !request.withUpload,
+      // Simulator "compile" is the editor's Start prerequisite, not a hardware
+      // upload. Its compiler module only publishes `simulatorFirmwarePath` on
+      // the non-compileOnly branch; with compileOnly=true the build succeeds but
+      // the CLI JSON has no firmwarePath and CES cannot launch the simulator.
+      // Other targets keep the normal compile-vs-upload distinction.
+      compileOnly: boardInfo.compiler === 'simulator' ? false : !request.withUpload,
       cleanBuild: request.cleanBuild,
       runtimeIpAddress: host,
       runtimeJwtToken: runtime?.tokens.getToken() ?? null,

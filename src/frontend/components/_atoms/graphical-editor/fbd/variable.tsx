@@ -1,4 +1,5 @@
 import * as Popover from '@radix-ui/react-popover'
+import { useUpdateNodeInternals } from '@xyflow/react'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 
 import { PLCVariable } from '../../../../../middleware/shared/ports/types'
@@ -41,6 +42,29 @@ import { getFBDPouVariablesRungNodeAndEdges } from './utils/utils'
 const VariableElement = (block: VariableProps) => {
   const { id, data, selected } = block
   const elementWidth = getVariableNodeWidth(block)
+  const updateNodeInternals = useUpdateNodeInternals()
+  const renderHandles = useMemo(() => {
+    const splitHandles = [...(data.inputHandles ?? []), ...(data.outputHandles ?? [])]
+    return splitHandles.length > 0 ? splitHandles : data.handles
+  }, [data.handles, data.inputHandles, data.outputHandles])
+  const handleLayoutSignature = useMemo(
+    () =>
+      renderHandles
+        .map((handle) =>
+          [
+            handle.type,
+            handle.id ?? '',
+            handle.position,
+            handle.relPosition?.x ?? '',
+            handle.relPosition?.y ?? '',
+            handle.style?.top ?? '',
+            handle.style?.left ?? '',
+            handle.style?.right ?? '',
+          ].join(':'),
+        )
+        .join('|'),
+    [renderHandles],
+  )
   const textAreaWidth = elementWidth - (VARIABLE_ELEMENT_SIZE - DEFAULT_VARIABLE_WIDTH)
   const pouName = useBoundPou()
   const updateModelFBD = useOpenPLCStore((state) => state.editorActions.updateModelFBD)
@@ -105,6 +129,10 @@ const VariableElement = (block: VariableProps) => {
         isSource: connectedEdges[index].source === id,
       }))
   }, [flow])
+
+  useEffect(() => {
+    updateNodeInternals(id)
+  }, [elementWidth, handleLayoutSignature, id, updateNodeInternals])
 
   const primaryConnection = useMemo(() => {
     const primaryConnection = connections[0]
@@ -678,8 +706,8 @@ const VariableElement = (block: VariableProps) => {
         </ModalContent>
       </Modal>
 
-      {data.handles.map((handle, index) => (
-        <CustomHandle key={index} {...handle} />
+      {renderHandles.map((handle) => (
+        <CustomHandle key={`${handle.type}:${handle.id ?? ''}:${handle.position}`} {...handle} />
       ))}
     </>
   )

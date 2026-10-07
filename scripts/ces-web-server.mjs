@@ -104,6 +104,84 @@ function runProcess(command, args, options = {}) {
   })
 }
 
+const IEC_IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
+const PROGRAM_DECLARATION_RE = /^([ \t]*PROGRAM[ \t]+)([^\s:]+)(?=[ \t\r\n]|$)/im
+
+function simulatorProgramIdentity(programFile) {
+  const programPath = String(programFile?.relativePath ?? '').replaceAll('\\', '/')
+  const fileStem = basename(programPath, extname(programPath))
+  const content = String(programFile?.content ?? '')
+  const declaration = content.match(PROGRAM_DECLARATION_RE)
+  const declaredName = declaration?.[2] || fileStem
+  if (!declaredName) return null
+
+  // CES/display filenames may contain '-' and other characters that are valid
+  // project identifiers but illegal in an IEC 61131-3 identifier. Keep the
+  // canonical/editor document untouched and alias only the transient simulator
+  // copy. Prefixing the sanitized value avoids keywords and leading digits.
+  const simulatorName = IEC_IDENTIFIER_RE.test(declaredName)
+    ? declaredName
+    : `CES_SIM_${declaredName.replace(/[^A-Za-z0-9_]/g, '_')}`
+  const simulatorContent =
+    simulatorName === declaredName || !declaration
+      ? content
+      : content.replace(PROGRAM_DECLARATION_RE, `$1${simulatorName}`)
+
+  return { declaredName, simulatorName, simulatorContent }
+}
+
+function withSimulatorDefaultSchedule(document) {
+  if (!document || document.format !== 'openplc-project-files') return document
+
+  let project
+  try {
+    project = JSON.parse(document.files?.projectJson ?? '')
+  } catch {
+    // Leave malformed project.json untouched so the normal compiler/parser path
+    // reports the real project error rather than hiding it behind synthesis.
+    return document
+  }
+
+  const resource = project?.data?.configuration?.resource
+  if (!resource || !Array.isArray(resource.tasks) || !Array.isArray(resource.instances)) return document
+  if (resource.tasks.length > 0 || resource.instances.length > 0) return document
+
+  // CES's canonical PLCopen application currently carries the POU graph but no
+  // runtime task/instance schedule. That is legitimate for editing, but STruC++
+  // emits a broken zero-task Configuration_CONFIG0 (it takes &tasks_storage[0]
+  // without declaring tasks_storage). Give the *transient simulator copy* the
+  // same default cyclic schedule a freshly-created OpenPLC PLC project gets.
+  // Never write this back through canonical-save: runtime deployment scheduling
+  // remains a CES concern, while editor simulation only needs one root program
+  // to execute.
+  const programFile = (document.files?.pouFiles ?? []).find((item) => {
+    const rel = String(item?.relativePath ?? '').replaceAll('\\', '/')
+    return rel.startsWith('pous/programs/') && extname(rel) !== ''
+  })
+  if (!programFile) return document
+
+  const identity = simulatorProgramIdentity(programFile)
+  if (!identity) return document
+
+  resource.tasks = [{ name: 'task0', triggering: 'Cyclic', interval: 'T#20ms', priority: 1 }]
+  resource.instances = [{ name: 'instance0', program: identity.simulatorName, task: 'task0' }]
+
+  const pouFiles = (document.files?.pouFiles ?? []).map((item) =>
+    item === programFile && identity.simulatorContent !== String(item?.content ?? '')
+      ? { ...item, content: identity.simulatorContent }
+      : item,
+  )
+
+  return {
+    ...document,
+    files: {
+      ...document.files,
+      projectJson: `${JSON.stringify(project, null, 2)}\n`,
+      pouFiles,
+    },
+  }
+}
+
 export async function buildSimulatorProject(document, options = {}) {
   const editorRoot = resolve(options.editorRoot ?? EDITOR_ROOT)
   const electron = options.electronExecutable ?? electronExecutable(editorRoot)
@@ -124,7 +202,7 @@ export async function buildSimulatorProject(document, options = {}) {
 
   const root = await fs.mkdtemp(join(tmpdir(), 'openplc-ces-simulator-'))
   try {
-    await writeProjectDirectory(root, document)
+    await writeProjectDirectory(root, withSimulatorDefaultSchedule(document))
     const result = await runProcess(
       electron,
       [cliBundle, '--cli', 'compile', root, '--target', SIMULATOR_TARGET, '--json'],

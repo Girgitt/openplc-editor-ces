@@ -11,7 +11,6 @@ import {
   DEFAULT_BLOCK_TYPE,
   DEFAULT_CONNECTION_CONNECTOR_X,
   DEFAULT_CONNECTION_CONNECTOR_Y,
-  DEFAULT_VARIABLE_CONNECTOR_X,
   DEFAULT_VARIABLE_CONNECTOR_Y,
   MINIMUM_ELEMENT_HEIGHT,
   MINIMUM_ELEMENT_WIDTH,
@@ -183,6 +182,7 @@ export const buildVariableNode = ({ id, position, variant }: VariableBuilderProp
           glbY: position.y + DEFAULT_VARIABLE_CONNECTOR_Y,
           relX: 0,
           relY: DEFAULT_VARIABLE_CONNECTOR_Y,
+          style: { top: DEFAULT_VARIABLE_CONNECTOR_Y, left: 0 },
         })
       : undefined
   const outputHandle =
@@ -191,10 +191,11 @@ export const buildVariableNode = ({ id, position, variant }: VariableBuilderProp
           id: 'output-variable',
           position: Position.Right,
           type: 'source',
-          glbX: position.x + DEFAULT_VARIABLE_CONNECTOR_X,
+          glbX: position.x + VARIABLE_ELEMENT_SIZE,
           glbY: position.y + DEFAULT_VARIABLE_CONNECTOR_Y,
-          relX: DEFAULT_VARIABLE_CONNECTOR_X,
+          relX: VARIABLE_ELEMENT_SIZE,
           relY: DEFAULT_VARIABLE_CONNECTOR_Y,
+          style: { top: DEFAULT_VARIABLE_CONNECTOR_Y, right: 0 },
         })
       : undefined
 

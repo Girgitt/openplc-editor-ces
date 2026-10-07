@@ -37,6 +37,17 @@ describe('makeHandle', () => {
       position: Position.Left,
       relPosition: { x: 5, y: 10 },
       glbPosition: { x: 105, y: 60 },
+      style: { top: 10, left: 0 },
     })
+  })
+
+  it('preserves distinct PLCopen y offsets as React Flow handle styles', () => {
+    const set = makeHandle('S', 'target', Position.Left, { x: 100, y: 50 }, { '@x': '0', '@y': '48' })
+    const reset = makeHandle('R1', 'target', Position.Left, { x: 100, y: 50 }, { '@x': '0', '@y': '96' })
+    const output = makeHandle('Q1', 'source', Position.Right, { x: 100, y: 50 }, { '@x': '60', '@y': '48' })
+
+    expect(set.style).toEqual({ top: 48, left: 0 })
+    expect(reset.style).toEqual({ top: 96, left: 0 })
+    expect(output.style).toEqual({ top: 48, right: 0 })
   })
 })

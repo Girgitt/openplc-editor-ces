@@ -418,6 +418,17 @@ describe('createWorkspaceSlice', () => {
     expect(store.getState().workspace.debugHarness).toBeNull()
   })
 
+  it('setDebugInstanceOverlay installs and clears the transient runtime mapping', () => {
+    expect(store.getState().workspace.debugInstanceOverlay).toBeNull()
+
+    const instances = [{ name: 'instance0', program: 'test-fbd-3', task: 'task0' }]
+    store.getState().workspaceActions.setDebugInstanceOverlay(instances)
+    expect(store.getState().workspace.debugInstanceOverlay).toEqual(instances)
+
+    store.getState().workspaceActions.setDebugInstanceOverlay(null)
+    expect(store.getState().workspace.debugInstanceOverlay).toBeNull()
+  })
+
   it('setDebugLocalMd5', () => {
     store.getState().workspaceActions.setDebugLocalMd5('abc123')
     expect(store.getState().workspace.debugLocalMd5).toBe('abc123')
@@ -489,6 +500,7 @@ describe('createWorkspaceSlice', () => {
       },
       instances: [{ name: 'LIBDBG_INST', program: 'LIBDBG_MAIN', task: 'LIBDBG_TASK' }],
     })
+    store.getState().workspaceActions.setDebugInstanceOverlay([{ name: 'instance0', program: 'P', task: 'task0' }])
     store.getState().workspaceActions.setDebugLocalMd5('md5')
     store.getState().workspaceActions.setDebugGraphList(['a'])
     store.getState().workspaceActions.setDebugDataStale(true)
@@ -510,6 +522,7 @@ describe('createWorkspaceSlice', () => {
     expect(workspace.fbDebugInstances.size).toBe(0)
     expect(workspace.fbSelectedInstance.size).toBe(0)
     expect(workspace.debugHarness).toBeNull()
+    expect(workspace.debugInstanceOverlay).toBeNull()
     expect(workspace.debugLocalMd5).toBeNull()
     expect(workspace.debugGraphList).toEqual([])
     expect(workspace.debugDataStale).toBe(false)

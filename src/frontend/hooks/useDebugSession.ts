@@ -76,15 +76,24 @@ export function useDebugSession(): UseDebugSessionReturn {
 
       wsActions.setDebugCContent(debugFileResult.content)
 
-      // A library-debug session runs against a generated harness program
-      // that instantiates every block in the library — it exists only in
-      // memory, so the POU list and instance list the debug tree is built
-      // from come from the session overlay, not from `project.data`.  An
-      // ordinary PLC project has no overlay and reads the project itself.
-      // See `composeLibraryDebugHarness`.
-      const harness = useOpenPLCStore.getState().workspace.debugHarness
+      // Debug-session overlays cover runtime structures that intentionally do
+      // not live in the saved engineering project. Library debug supplies both
+      // an extra harness POU and its instances; CES simulation supplies only the
+      // transient task/instance mapping synthesized in the simulator build copy.
+      // An ordinary scheduled PLC project reads its persisted instances.
+      const workspace = useOpenPLCStore.getState().workspace
+      const harness = workspace.debugHarness
       const debugPous = harness ? [...project.data.pous, harness.programPou] : project.data.pous
-      const instances = harness?.instances ?? project.data.configurations.resource.instances
+      const instances =
+        harness?.instances ?? workspace.debugInstanceOverlay ?? project.data.configurations.resource.instances
+      if (!harness && workspace.debugInstanceOverlay) {
+        logActions.addLog({
+          level: 'info',
+          message: `Debugger using simulator instance overlay: ${workspace.debugInstanceOverlay
+            .map((instance) => `${instance.name} -> ${instance.program}`)
+            .join(', ')}.`,
+        })
+      }
 
       const debugMap = parseDebugMap(debugFileResult.content)
       if (!debugMap) {

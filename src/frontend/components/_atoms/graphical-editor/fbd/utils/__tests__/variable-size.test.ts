@@ -68,6 +68,8 @@ describe('resizeVariableNodeToName', () => {
 
   it('grows an input variable to the left so its output pin stays on the block', () => {
     const node = buildVariableNode({ id: 'in', position, variant: 'input-variable' })
+    expect(node.data.outputConnector?.relPosition).toEqual({ x: VARIABLE_ELEMENT_SIZE, y: 16 })
+    expect(node.data.outputConnector?.style).toEqual({ top: 16, right: 0 })
     const resized = resizeVariableNodeToName(node, LONG_NAME)
     const delta = (resized.width ?? 0) - VARIABLE_ELEMENT_SIZE
 

@@ -52,6 +52,12 @@ try {
 ` +
       `const fs=require('node:fs'); const path=require('node:path');\n` +
       `const root=process.argv[5]; const out=path.join(root,'build','OpenPLC Simulator');\n` +
+      `const project=JSON.parse(fs.readFileSync(path.join(root,'project.json'),'utf8'));\n` +
+      `const resource=project.data.configuration.resource;\n` +
+      `if(resource.tasks?.[0]?.name!=='task0'||resource.tasks?.[0]?.interval!=='T#20ms') throw new Error('missing simulator task');\n` +
+      `if(resource.instances?.[0]?.name!=='instance0'||resource.instances?.[0]?.program!=='CES_SIM_test_fbd_2'||resource.instances?.[0]?.task!=='task0') throw new Error('missing simulator instance');\n` +
+      `const pou=fs.readFileSync(path.join(root,'pous','programs','test-fbd-2.fbd'),'utf8');\n` +
+      `if(!/^PROGRAM CES_SIM_test_fbd_2$/m.test(pou)) throw new Error('invalid simulator PROGRAM alias');\n` +
       `fs.mkdirSync(path.join(out,'src'),{recursive:true});\n` +
       `const fw=path.join(out,'firmware.hex'); fs.writeFileSync(fw,':00000001FF\\n');\n` +
       `fs.writeFileSync(path.join(out,'src','debug-map.json'),JSON.stringify({md5:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',variables:[]}));\n` +
@@ -64,11 +70,22 @@ try {
     documentId: 'fake',
     files: {
       projectPath: '/ces-session',
-      projectJson: '{"meta":{"name":"Demo","type":"plc-project"}}',
+      projectJson: JSON.stringify({
+        meta: { name: 'Demo', type: 'plc-project' },
+        data: {
+          pous: [],
+          dataTypes: [],
+          libraries: [],
+          configuration: { resource: { tasks: [], instances: [], globalVariables: [] } },
+        },
+      }),
       deviceConfig: '{}',
       pinMapping: '{}',
       libraryManifest: '',
-      pouFiles: [{ relativePath: 'pous/programs/Main.st', content: 'PROGRAM Main\nEND_PROGRAM\n' }],
+      pouFiles: [{
+        relativePath: 'pous/programs/test-fbd-2.fbd',
+        content: 'PROGRAM test-fbd-2\n{\"rung\":{\"nodes\":[],\"edges\":[]}}\nEND_PROGRAM\n',
+      }],
       serverFiles: [], remoteDeviceFiles: [], dataTypeFiles: [], deletions: [],
     },
   }

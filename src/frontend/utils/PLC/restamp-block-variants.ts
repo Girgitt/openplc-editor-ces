@@ -159,7 +159,10 @@ function sameHandleGeometry(a: RestampedHandle, b: RestampedHandle): boolean {
     a.relPosition.x === b.relPosition.x &&
     a.relPosition.y === b.relPosition.y &&
     a.glbPosition.x === b.glbPosition.x &&
-    a.glbPosition.y === b.glbPosition.y
+    a.glbPosition.y === b.glbPosition.y &&
+    a.style?.top === b.style?.top &&
+    a.style?.left === b.style?.left &&
+    a.style?.right === b.style?.right
   )
 }
 

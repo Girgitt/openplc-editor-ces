@@ -113,6 +113,17 @@ export type WorkspaceState = {
      * session runs the project's own programs.
      */
     debugHarness: { programPou: PLCPou; instances: PLCInstance[] } | null
+    /**
+     * Session-only runtime instance mapping for projects whose persisted
+     * engineering model intentionally carries no OpenPLC task/instance schedule.
+     *
+     * CES simulation synthesises `instance0 -> <root program>` only in the
+     * transient simulator copy. The debugger must see the same logical mapping
+     * so it can resolve local-variable paths from debug-map.json, but persisting
+     * that scheduling data back into the PLC project would cross the CES runtime
+     * ownership boundary.
+     */
+    debugInstanceOverlay: PLCInstance[] | null
     debugLocalMd5: string | null
     debugGraphList: string[]
     debugDataStale: boolean
@@ -211,6 +222,8 @@ export type WorkspaceActions = {
   setFbDebugInstances: (instances: Map<string, FbInstanceInfo[]>) => void
   /** Install (or clear, with `null`) the session's harness overlay. */
   setDebugHarness: (harness: { programPou: PLCPou; instances: PLCInstance[] } | null) => void
+  /** Install (or clear) a session-only runtime instance mapping. */
+  setDebugInstanceOverlay: (instances: PLCInstance[] | null) => void
   setFbSelectedInstance: (fbTypeName: string, key: string) => void
   setDebugLocalMd5: (md5: string | null) => void
   setDebugGraphList: (list: string[]) => void
