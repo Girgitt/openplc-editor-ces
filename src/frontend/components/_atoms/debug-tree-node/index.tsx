@@ -106,6 +106,10 @@ const TreeNode = ({
             canForceNode && 'cursor-pointer hover:bg-neutral-100 dark:hover:bg-neutral-850',
           )}
           style={{ paddingLeft: `${indentWidth}px` }}
+          data-debug-variable={node.compositeKey}
+          data-debug-forceable={canForceNode ? 'true' : 'false'}
+          data-debug-forced={isCurrentNodeForced ? 'true' : 'false'}
+          data-debug-forced-value={isCurrentNodeForced ? String(forcedValue) : undefined}
           onClick={handleRowBodyClick}
         >
           <div className='flex min-w-0 items-center gap-2'>

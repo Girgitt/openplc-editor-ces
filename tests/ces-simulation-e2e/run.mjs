@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { chromium } from '@playwright/test'
 import { createCesEditorServer } from '../../scripts/ces-web-server.mjs'
 import { PROJECT_CASES, createFixture } from './fixtures.mjs'
+import { clickBooleanDebugAction, openNativeDebugger } from './debug-controls.mjs'
 
 const root = resolve(fileURLToPath(new URL('../..', import.meta.url)))
 const artifacts = resolve(process.env.CES_SIM_E2E_ARTIFACTS ?? join(root, 'test-results', 'ces-simulation-e2e'))
@@ -136,20 +137,30 @@ async function runCase(browser, fixture) {
       return snapshot.active && snapshot.values?.length > 0 ? snapshot : false
     }, 'nonempty live debug snapshot from AVR8js', 45000)
     assert.ok(live.values.length > 0, 'Running simulator has no debug leaves')
+    // The real debugger's watch panel exposes force/release for local variables
+    // consistently across FBD and LD. Clicking the canvas itself does not:
+    // FBD variable boxes use a validation-dependent popover and LD contacts
+    // open theirs on left-click rather than right-click.
+    if (fixture.input) await openNativeDebugger(page)
 
     if (fixture.input) {
       phase = 'force-and-observe'
       assert.equal(boolValue(lookup(live, fixture.output)), false,
         `${fixture.name}: expected FALSE output before forcing inputs`)
       const forceBool = async (name, value) => {
-        const node = page.locator('.react-flow__node').filter({ hasText: name }).first()
-        await node.click({ button: 'right', timeout: 15000 })
-        await page.getByText(value ? 'Force True' : 'Force False', { exact: true }).last().click({ timeout: 10000 })
+        await clickBooleanDebugAction(page, fixture.name, name, value ? 'Force True' : 'Force False')
+        // A menu disappearing is not proof that the transport applied the force.
+        await until(async () => {
+          const input = lookup(await call('/api/simulator/live'), name)
+          return input && boolValue(input) === value ? input : false
+        }, `${fixture.name}: ${name} executes force ${value}`, 15000)
       }
       const releaseBool = async (name) => {
-        const node = page.locator('.react-flow__node').filter({ hasText: name }).first()
-        await node.click({ button: 'right', timeout: 15000 })
-        await page.getByText('Release Force', { exact: true }).last().click({ timeout: 10000 })
+        await clickBooleanDebugAction(page, fixture.name, name, 'Release Force')
+        await until(async () => {
+          const input = lookup(await call('/api/simulator/live'), name)
+          return input && boolValue(input) === false ? input : false
+        }, `${fixture.name}: ${name} returns to declared FALSE after release`, 15000)
       }
       const expectOutput = async (expected, description) => until(async () => {
         const output = lookup(await call('/api/simulator/live'), fixture.output)
@@ -208,6 +219,13 @@ async function runCase(browser, fixture) {
       fixture: fixture.name, phase, message: String(error), stack: error?.stack,
       health: base ? await call('/api/health').catch((e) => String(e)) : null,
       live: base ? await call('/api/simulator/live').catch((e) => String(e)) : null,
+      debugRows: page ? await page.locator('[data-debug-variable]').evaluateAll((rows) => rows.map((row) => ({
+        key: row.getAttribute('data-debug-variable'),
+        forceable: row.getAttribute('data-debug-forceable'),
+        forced: row.getAttribute('data-debug-forced'),
+        forcedValue: row.getAttribute('data-debug-forced-value'),
+        text: row.textContent?.trim().slice(0, 120),
+      }))).catch(() => []) : [],
     }
     await fs.writeFile(join(artifacts, `${fixture.name}.failure.json`), JSON.stringify(diagnostics, null, 2))
     throw error

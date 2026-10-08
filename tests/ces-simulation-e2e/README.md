@@ -69,3 +69,22 @@ code if *any* case fails, including missing dependencies.
 These are real integration checks, so initial execution should be reviewed and
 selectors adjusted if the user-facing editor changes. They are NOT validated
 merely by successfully running the mocked server contract test.
+
+## Debugger forcing during E2E
+
+The FBD/LD tests drive the native **Debugger → Variables** watch rows.
+They do **not** right-click ReactFlow nodes (FBD and LD context menus
+use different event handling). Each forced variable must have a debug index,
+and the test waits for the watch row to acknowledge `forced=true` and the
+requested value before asserting the executed simulator result. Release must
+clear the forced state. Failures include watch-row state in `*.failure.json`.
+
+Fast browser-control contract tests (no Arduino build):
+
+```bash
+node --test tests/ces-simulation-e2e/debug-controls.test.mjs
+```
+
+A stale web bundle will not contain the stable Debugger row attributes.
+Use `./scripts/bootstrap-ces-simulation-e2e.sh --rebuild` after updating this
+editor revision if publication did not rebuild the renderer.

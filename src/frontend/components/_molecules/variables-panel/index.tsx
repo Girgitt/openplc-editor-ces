@@ -74,6 +74,7 @@ const ContextMenu = ({
   return createPortal(
     <div
       ref={menuRef}
+      data-testid='openplc-debug-force-menu'
       className={cn(
         'box z-[100] flex h-fit w-fit min-w-32 flex-col rounded-lg text-xs',
         'bg-white text-neutral-1000 dark:bg-neutral-950 dark:text-neutral-300',
@@ -378,6 +379,10 @@ const VariablesPanel = ({
                 />
               </div>
               <div
+                data-debug-variable={variable.compositeKey}
+                data-debug-forceable={canForce ? 'true' : 'false'}
+                data-debug-forced={isForced ? 'true' : 'false'}
+                data-debug-forced-value={isForced ? String(forcedVal) : undefined}
                 className={`grid min-w-0 flex-1 grid-cols-[1fr_auto_auto] items-center gap-2 ${
                   canForce ? 'cursor-pointer hover:bg-neutral-100 dark:hover:bg-neutral-850' : ''
                 }`}
@@ -421,7 +426,7 @@ const VariablesPanel = ({
 
   return (
     <>
-      <div className='flex h-full w-full min-w-52 flex-col gap-2 overflow-hidden rounded-lg border-[0.75px] border-neutral-200 bg-white p-2 text-cp-sm font-medium text-neutral-1000 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-50'>
+      <div data-testid='openplc-debug-variables' className='flex h-full w-full min-w-52 flex-col gap-2 overflow-hidden rounded-lg border-[0.75px] border-neutral-200 bg-white p-2 text-cp-sm font-medium text-neutral-1000 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-50'>
         <div className='flex h-7 w-[90px] select-none items-center gap-1 rounded-lg bg-neutral-100 p-1 text-cp-sm dark:bg-brand-dark'>
           <ZapIcon className='h-4 w-4' />
           <p>Variables</p>
