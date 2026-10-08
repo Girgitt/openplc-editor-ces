@@ -60,8 +60,6 @@ const CONTROLS_CONFIG = { showInteractive: false }
 // --- Debug edge coloring ---
 
 type FBDDebugContext = {
-  isFunctionBlockPou: boolean
-  hasProgramInstance: boolean
   getCompositeKey: (variableName: string) => string
   boolValues: Map<string, string>
   forcedValues: Map<string, boolean>
@@ -117,8 +115,6 @@ const computeFBDEdgeStates = (
         variant?: { name: string; type: string; variables: Array<{ name: string; type: { value: string } }> }
       }
       if (!sourceHandle) return undefined
-
-      if (!ctx.isFunctionBlockPou && !ctx.hasProgramInstance) return undefined
 
       const outputVariable = blockData.variant?.variables.find((v) => v.name === sourceHandle)
       if (!outputVariable || outputVariable.type.value.toUpperCase() !== 'BOOL') return undefined
@@ -214,9 +210,6 @@ export const FBDBody = ({ rung, nodeDivergences = [], isDebuggerActive = false }
   const { closeModal, openModal } = useOpenPLCStore((state) => state.modalActions)
   const blockElementModal = useOpenPLCStore((state) => state.modals['block-fbd-element'])
   const pous = useOpenPLCStore((state) => state.project.data.pous)
-  const hasProgramInstance = useOpenPLCStore((state) =>
-    state.project.data.configurations.resource.instances.some((instance) => instance.program === pouName),
-  )
   const isDebuggerVisible = useIsDebuggerVisible()
   const debugVariableValues = useDebugBoolValuesMap()
   const debugForcedVariables = useDebugForcedVariablesMap()
@@ -266,8 +259,6 @@ export const FBDBody = ({ rung, nodeDivergences = [], isDebuggerActive = false }
     () =>
       isDebuggerVisible
         ? computeFBDEdgeStates(rungLocal.nodes, rungLocal.edges, {
-            isFunctionBlockPou: pouRef?.pouType === 'function-block',
-            hasProgramInstance,
             getCompositeKey,
             boolValues: debugVariableValues,
             forcedValues: debugForcedVariables,
@@ -278,8 +269,6 @@ export const FBDBody = ({ rung, nodeDivergences = [], isDebuggerActive = false }
       isDebuggerVisible,
       rungLocal.nodes,
       rungLocal.edges,
-      pouRef?.pouType,
-      hasProgramInstance,
       getCompositeKey,
       debugVariableValues,
       debugForcedVariables,
