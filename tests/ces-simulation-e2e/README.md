@@ -49,12 +49,12 @@ edit the operator's CES projects or contact physical PLCs.
 ## Acceptance scenarios
 
 - **M53_FBD_RS:** save, close/reload editor, verify `S`/`R1` edge identities,
-  compile, start, observe debug values, force `v1` to set `RS0`, release and
-  verify latch, force `v2` to reset, stop, then compile/start/stop again.
+  compile, start, observe debug values, force `v1` to set `RS0`, force it FALSE
+  to verify latch, release, force `v2` TRUE/FALSE to reset, stop, then restart.
 - **M53_LD_AND:** save/reload ladder contacts and connections, compile/start,
-  force `v1` (with `v2` TRUE), verify coil output, release and verify FALSE.
+  exercise all four BOOL combinations, explicitly force both inputs FALSE, then release.
 - **M53_LD_OR:** parallel branch, compile/start, force `v1`, verify coil output,
-  release and verify FALSE.
+  exercise all four BOOL combinations, explicitly force both inputs FALSE, then release.
 - **M53_ST_TON:** compile/start ST timer with `T#100ms` preset, verify
   debug snapshot and output transitions TRUE, then stop.
 
@@ -77,12 +77,14 @@ They do **not** right-click ReactFlow nodes (FBD and LD context menus
 use different event handling). Each forced variable must have a debug index,
 and the test waits for the watch row to acknowledge `forced=true` and the
 requested value before asserting the executed simulator result. Release must
-clear the forced state. Failures include watch-row state in `*.failure.json`.
+clear the forced state; it must **not** be treated as a reset to the declaration's
+initial value. The test explicitly forces FALSE before releasing, because locals
+without PLC writers can retain their last value after unforcing. Failures include watch-row state in `*.failure.json`.
 
 Fast browser-control contract tests (no Arduino build):
 
 ```bash
-node --test tests/ces-simulation-e2e/debug-controls.test.mjs
+node --test tests/ces-simulation-e2e/*.test.mjs
 ```
 
 A stale web bundle will not contain the stable Debugger row attributes.

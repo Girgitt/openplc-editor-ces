@@ -13,6 +13,7 @@ import { chromium } from '@playwright/test'
 import { createCesEditorServer } from '../../scripts/ces-web-server.mjs'
 import { PROJECT_CASES, createFixture } from './fixtures.mjs'
 import { clickBooleanDebugAction, openNativeDebugger } from './debug-controls.mjs'
+import { runLdBooleanTruthTable, runRsSetReset } from './scenarios.mjs'
 
 const root = resolve(fileURLToPath(new URL('../..', import.meta.url)))
 const artifacts = resolve(process.env.CES_SIM_E2E_ARTIFACTS ?? join(root, 'test-results', 'ces-simulation-e2e'))
@@ -156,11 +157,10 @@ async function runCase(browser, fixture) {
         }, `${fixture.name}: ${name} executes force ${value}`, 15000)
       }
       const releaseBool = async (name) => {
+        // The native debugger waits for forced=false after a successful
+        // release. Do not assert that the runtime value resets to its initial
+        // value: these test locals have no PLC writer, so the value can persist.
         await clickBooleanDebugAction(page, fixture.name, name, 'Release Force')
-        await until(async () => {
-          const input = lookup(await call('/api/simulator/live'), name)
-          return input && boolValue(input) === false ? input : false
-        }, `${fixture.name}: ${name} returns to declared FALSE after release`, 15000)
       }
       const expectOutput = async (expected, description) => until(async () => {
         const output = lookup(await call('/api/simulator/live'), fixture.output)
@@ -168,26 +168,11 @@ async function runCase(browser, fixture) {
       }, description, 30000)
 
       if (fixture.ext === 'ld') {
-        // All four truth-table rows, through real debugger forcing. This also
-        // detects swapped/visually present-but-disconnected parallel contacts.
-        const isAnd = fixture.name === 'M53_LD_AND'
-        for (const [v1, v2] of [[false, false], [true, false], [false, true], [true, true]]) {
-          await forceBool('v1', v1)
-          await forceBool('v2', v2)
-          await expectOutput(isAnd ? v1 && v2 : v1 || v2,
-            `${fixture.name}: v1=${v1} v2=${v2} truth-table output`)
-        }
-        await releaseBool('v1')
-        await releaseBool('v2')
-        await expectOutput(false, `${fixture.name}: output returns FALSE after release`)
+        await runLdBooleanTruthTable({
+          isAnd: fixture.name === 'M53_LD_AND', forceBool, releaseBool, expectOutput,
+        })
       } else {
-        await forceBool('v1', true)
-        await expectOutput(true, 'RS set drives out1 TRUE')
-        await releaseBool('v1')
-        await expectOutput(true, 'RS latch retains Q1 after releasing S')
-        await forceBool('v2', true)
-        await expectOutput(false, 'RS reset drives out1 FALSE')
-        await releaseBool('v2')
+        await runRsSetReset({ forceBool, releaseBool, expectOutput })
       }
     } else {
       await until(async () => {
