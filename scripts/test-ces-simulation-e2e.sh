@@ -4,13 +4,20 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-if [[ ! -d node_modules ]]; then
-  echo 'ERROR: editor dependencies missing. Run npm ci in the editor submodule.' >&2
-  exit 2
+# No downloads or long compiler builds during prerequisite validation.
+if [[ "${1:-}" == '--help' ]]; then
+  cat <<'USAGE'
+Usage: scripts/test-ces-simulation-e2e.sh [--case M53_FBD_RS|M53_LD_AND|M53_LD_OR|M53_ST_TON]
+       scripts/test-ces-simulation-e2e.sh --check
+
+Real browser + compiler simulation tests (slow, opt-in).
+Missing dependencies? Run: ./scripts/bootstrap-ces-simulation-e2e.sh
+USAGE
+  exit 0
 fi
-if [[ ! -f release/app/dist/ces-web/index.html || ! -f openplc-cli.dev.js ]]; then
-  echo 'ERROR: editor not built. Run npm run build:ces-web first.' >&2
-  exit 2
+node scripts/check-ces-simulation-e2e-prereqs.mjs
+if [[ "${1:-}" == '--check' ]]; then
+  exit 0
 fi
 # Arduino + STruC++ take ~30 seconds or more per scenario. Never retry a
 # compilation just because a browser assertion failed: retain trace artifacts.

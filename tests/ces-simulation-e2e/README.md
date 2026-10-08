@@ -11,6 +11,8 @@ Compilation takes 30+ seconds and can initially download Arduino dependencies.
 From the CES root (after publishing/pinning this change):
 
 ```bash
+# Explicit one-time setup, including matching Playwright Chromium:
+./scripts/bootstrap-openplc-simulation-e2e.sh
 ./scripts/e2e-openplc-simulation.sh
 # Or one case:
 ./scripts/e2e-openplc-simulation.sh --case M53_FBD_RS
@@ -19,14 +21,21 @@ From the CES root (after publishing/pinning this change):
 Or from this editor repository:
 
 ```bash
-npm ci                        # if dependencies are missing
-npm run build:ces-web         # if the bundle is missing or stale
+./scripts/bootstrap-ces-simulation-e2e.sh
+./scripts/test-ces-simulation-e2e.sh --check    # preflight only; no compiler
 ./scripts/test-ces-simulation-e2e.sh
 ```
 
-Prerequisites: Chromium installed for Playwright (`npx playwright install
-chromium`), Electron's local CLI, STruC++, Arduino CLI, and the CES web build.
-The suite does NOT use a fake compiler or silently skip missing prerequisites.
+Before any compilation, the E2E runner checks its local npm, STruC++, Electron,
+web-bundle, and CLI prerequisites and launches Chromium once. Missing browsers
+and Linux shared libraries are reported with a command to run the explicit
+bootstrap script. Test runs never install packages or silently skip prerequisites.
+
+Bootstrap installs the pinned npm packages and toolchain, Electron, matching
+Playwright Chromium, and builds the CES web bundle only if absent. Use
+`--with-system-deps` when OS browser libraries are missing (may require sudo).
+Run `--check` for a quick, read-only preflight. The real compiler needs network
+access or a warmed Arduino package cache for its initial setup.
 The compiler must have network access or warmed Arduino package cache for
 first-time installation.
 
