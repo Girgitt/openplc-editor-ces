@@ -55,6 +55,9 @@ edit the operator's CES projects or contact physical PLCs.
   exercise all four BOOL combinations, explicitly force both inputs FALSE, then release.
 - **M53_LD_OR:** parallel branch, compile/start, force `v1`, verify coil output,
   exercise all four BOOL combinations, explicitly force both inputs FALSE, then release.
+- **M53_LD_MIXED:** one rung `(v1 OR v2) AND v3`, save/reopen the native LD editor,
+  compile/start and verify all eight Boolean input combinations with real forcing.
+  Canonical PLCopen graph/layout round-trip is covered separately by the fast Jest regression.
 - **M53_ST_TON:** compile/start ST timer with `T#100ms` preset, verify
   debug snapshot and output transitions TRUE, then stop.
 

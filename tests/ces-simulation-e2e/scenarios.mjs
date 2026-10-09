@@ -40,3 +40,21 @@ export async function runRsSetReset({ forceBool, releaseBool, expectOutput }) {
   await expectOutput(false, 'RS remains reset with R1 forced FALSE')
   await releaseBool('v2')
 }
+
+/** Mixed single-rung ladder: both parallel paths AND the downstream contact. */
+export async function runLdMixedTruthTable({ forceBool, releaseBool, expectOutput }) {
+  for (const v1 of [false, true]) {
+    for (const v2 of [false, true]) {
+      for (const v3 of [false, true]) {
+        await forceBool('v1', v1)
+        await forceBool('v2', v2)
+        await forceBool('v3', v3)
+        await expectOutput((v1 || v2) && v3,
+          `LD mixed: (${v1} OR ${v2}) AND ${v3} truth-table output`)
+      }
+    }
+  }
+  for (const name of ['v1', 'v2', 'v3']) await forceBool(name, false)
+  await expectOutput(false, 'LD mixed: explicitly clear all three inputs')
+  for (const name of ['v1', 'v2', 'v3']) await releaseBool(name)
+}

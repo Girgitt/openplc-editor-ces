@@ -132,6 +132,18 @@ export const ldOrBody = {
   }],
 }
 
+// Mixed network: (v1 OR v2) AND v3 → out1.  One rung, not two.
+export const ldMixedBody = JSON.parse(JSON.stringify(ldOrBody))
+ldMixedBody.name = 'M53_LD_MIXED'
+const mixed = ldMixedBody.rungs[0]
+mixed.nodes.splice(5, 0, ldContact('contact-v3', 5, 'v3', 335))
+mixed.nodes[6] = ldCoil('coil-out', 3, 'out1', 455)
+mixed.nodes[7] = { ...rightRail, position: { x: 555, y: 0 },
+  data: { ...rightRail.data, inputConnector: ladderHandle('in', 'target', 'left', 555, 120) } }
+mixed.edges = mixed.edges.filter((link) => link.id !== 'r6')
+mixed.edges.push(edge('r6a', 'branch-close', 'contact-v3', 'out', 'in'),
+  edge('r6b', 'contact-v3', 'coil-out', 'out', 'in'))
+
 const projectMeta = (name, declarations) => ({
   meta: { name, type: 'plc-project' },
   data: { pous: [], dataTypes: [], libraries: [],
@@ -150,6 +162,9 @@ export const PROJECT_CASES = [
   { name: 'M53_LD_AND', ext: 'ld', body: ldAndBody, vars: ['v1 : BOOL := FALSE', 'v2 : BOOL := FALSE', 'out1 : BOOL'],
     input: 'v1', output: 'out1', expect: 'TRUE' },
   { name: 'M53_LD_OR', ext: 'ld', body: ldOrBody, vars: ['v1 : BOOL := FALSE', 'v2 : BOOL := FALSE', 'out1 : BOOL'],
+    input: 'v1', output: 'out1', expect: 'TRUE' },
+  { name: 'M53_LD_MIXED', ext: 'ld', body: ldMixedBody,
+    vars: ['v1 : BOOL := FALSE', 'v2 : BOOL := FALSE', 'v3 : BOOL := FALSE', 'out1 : BOOL'],
     input: 'v1', output: 'out1', expect: 'TRUE' },
   { name: 'M53_ST_TON', ext: 'st', body: 'timer1(IN := enable, PT := T#100ms);\nout1 := timer1.Q;',
     vars: ['enable : BOOL := TRUE', 'out1 : BOOL', 'timer1 : TON'], output: 'out1', expect: 'TRUE' },

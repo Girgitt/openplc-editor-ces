@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { runLdBooleanTruthTable, runRsSetReset } from './scenarios.mjs'
+import { runLdBooleanTruthTable, runLdMixedTruthTable, runRsSetReset } from './scenarios.mjs'
 
 function unforcedLocalRuntime() {
   const values = { v1: false, v2: false }
@@ -70,3 +70,22 @@ for (const isAnd of [true, false]) {
     ])
   })
 }
+
+
+test('LD mixed (v1 OR v2) AND v3 exercises all eight rows and releases each input', async () => {
+  const runtime = unforcedLocalRuntime()
+  runtime.values.v3 = false
+  const observed = []
+  await runLdMixedTruthTable({
+    ...runtime,
+    expectOutput: async (expected) => {
+      const actual = (runtime.values.v1 || runtime.values.v2) && runtime.values.v3
+      assert.equal(actual, expected)
+      observed.push(actual)
+    },
+  })
+  assert.deepEqual(observed, [false, false, false, true, false, true, false, true, false])
+  assert.equal(runtime.forced.size, 0)
+  assert.deepEqual(runtime.values, { v1: false, v2: false, v3: false })
+  assert.deepEqual(runtime.actions.slice(-3), ['release:v1', 'release:v2', 'release:v3'])
+})

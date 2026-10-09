@@ -21,6 +21,8 @@ import {
 } from '@root/middleware/shared/ports/xml-types/old-editor/pous/languages/ladder-diagram'
 import { Node } from '@xyflow/react'
 
+import { encodeLdGraph } from '../../../ld-graph-metadata'
+
 /**
  * Find the connections of a node in a rung.
  */
@@ -628,7 +630,9 @@ const ladderToXml = (rungs: RungLadderState[]) => {
     offsetY += rung.reactFlowViewport[1]
   })
 
-  return ladderXML
+  // Store authoring-only junctions, rung identity and positions in the
+  // PLCopen-defined <body><addData> extension. Executable <LD> is unchanged.
+  return { body: { ...ladderXML.body, addData: encodeLdGraph(rungs, ladderXML.body.LD) } }
 }
 
 export { ladderToXml }

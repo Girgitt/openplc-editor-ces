@@ -4,15 +4,20 @@ import {
   CoilNode,
   ContactNode,
   PowerRailNode,
+  ParallelNode,
   VariableNode,
 } from '@root/frontend/components/_atoms/graphical-editor/ladder/utils/types'
 import { LadderFlowType } from '@root/frontend/store/slices'
 import { Edge, Position } from '@xyflow/react'
 
+import { buildParallel } from '@root/frontend/components/_atoms/graphical-editor/ladder/buildNodes'
+import { decodeLdGraph, ldExecutableSignature } from '../../ld-graph-metadata'
+import { ladderToXml } from '../../xml-generator/old-editor/language/ladder-xml'
+
 import { asArray, asRecord, asString } from '../xml-node'
 import { makeHandle, parsePositionXml, toNumber } from './geometry'
 
-type LadderParsedNode = PowerRailNode | ContactNode | CoilNode | BlockNode<BlockVariant> | VariableNode
+type LadderParsedNode = PowerRailNode | ContactNode | CoilNode | BlockNode<BlockVariant> | VariableNode | ParallelNode
 
 // Reverse of xml-generator/old-editor/language/ladder-xml.ts. Greenfield (no
 // PLCopen import reference existed anywhere before this) — reconstructed by
@@ -430,6 +435,71 @@ function parseOutVariableXml(entry: Record<string, unknown>): { node: VariableNo
   }
 }
 
+/**
+ * Legacy/foreign XML contains only executable LD links, not editor junctions.
+ * Rebuild an unambiguous two-path branch when both input contacts share the
+ * same upstream source and both feed the same downstream contact/coil.
+ * Reject ambiguous/nested cases rather than inventing executable wiring.
+ * A native CES document instead restores exact junction geometry via addData.
+ */
+function restoreUnambiguousParallel(nodes: LadderParsedNode[], edges: Edge[]): void {
+  const byId = new Map(nodes.map((node) => [node.id, node]))
+  const pendingTargets = nodes.filter((node) => node.type === 'contact' || node.type === 'coil')
+  for (const target of pendingTargets) {
+    const incoming = edges.filter((edge) => edge.target === target.id)
+    if (incoming.length !== 2 || incoming.some((edge) => edge.targetHandle !== LEAF_INPUT_HANDLE)) continue
+    const [first, second] = incoming.map((edge) => byId.get(edge.source))
+    if (!first || !second || first.id === second.id || first.type !== 'contact' || second.type !== 'contact') continue
+    const firstUp = edges.filter((edge) => edge.target === first.id)
+    const secondUp = edges.filter((edge) => edge.target === second.id)
+    if (firstUp.length !== 1 || secondUp.length !== 1 ||
+        firstUp[0].source !== secondUp[0].source ||
+        firstUp[0].sourceHandle !== secondUp[0].sourceHandle) continue
+    const predecessor = byId.get(firstUp[0].source)
+    if (!predecessor || (predecessor.type !== 'powerRail' && predecessor.type !== 'contact')) continue
+    if (edges.filter((edge) => edge.source === predecessor.id).length !== 2 ||
+        edges.filter((edge) => edge.source === first.id).length !== 1 ||
+        edges.filter((edge) => edge.source === second.id).length !== 1) continue
+
+    const [upper, lower] = first.position.y <= second.position.y ? [first, second] : [second, first]
+    const branchX = Math.min(upper.position.x, lower.position.x)
+    const splitX = Math.max(predecessor.position.x + (predecessor.width ?? 0) + 4, branchX - 16)
+    const closeX = Math.min(target.position.x - 16,
+      Math.max(upper.position.x + (upper.width ?? 0), lower.position.x + (lower.width ?? 0)) + 4)
+    if (splitX >= branchX || closeX >= target.position.x) continue
+    const posY = upper.position.y + (upper.height ?? 0) / 2
+    const split = buildParallel({ id: `LD-RESTORE-OPEN-${target.id}`, type: 'open',
+      posX: splitX, posY, handleX: splitX, handleY: posY + 1 })
+    const join = buildParallel({ id: `LD-RESTORE-CLOSE-${target.id}`, type: 'close',
+      posX: closeX, posY, handleX: closeX, handleY: posY + 1 })
+    if (byId.has(split.id) || byId.has(join.id)) continue
+    split.data.parallelCloseReference = join.id
+    join.data.parallelOpenReference = split.id
+
+    const replaced = new Set([...incoming, ...firstUp, ...secondUp].map((edge) => edge.id))
+    // Preserve the IEC semantics of the two connections while making the
+    // editor's explicit split and join handles usable after import.
+    const additions: Edge[] = [
+      { id: `${split.id}-in`, source: predecessor.id, target: split.id,
+        sourceHandle: firstUp[0].sourceHandle, targetHandle: split.data.inputConnector?.id },
+      { id: `${split.id}-upper`, source: split.id, target: upper.id,
+        sourceHandle: split.data.outputConnector?.id, targetHandle: LEAF_INPUT_HANDLE },
+      { id: `${split.id}-lower`, source: split.id, target: lower.id,
+        sourceHandle: split.data.parallelOutputConnector?.id, targetHandle: LEAF_INPUT_HANDLE },
+      { id: `${join.id}-upper`, source: upper.id, target: join.id,
+        sourceHandle: LEAF_OUTPUT_HANDLE, targetHandle: join.data.inputConnector?.id },
+      { id: `${join.id}-lower`, source: lower.id, target: join.id,
+        sourceHandle: LEAF_OUTPUT_HANDLE, targetHandle: join.data.parallelInputConnector?.id },
+      { id: `${join.id}-out`, source: join.id, target: target.id,
+        sourceHandle: join.data.outputConnector?.id, targetHandle: LEAF_INPUT_HANDLE },
+    ].map((edge) => ({ ...edge, type: 'smoothstep' }))
+    edges.splice(0, edges.length, ...edges.filter((edge) => !replaced.has(edge.id)), ...additions)
+    nodes.push(split, join)
+    byId.set(split.id, split)
+    byId.set(join.id, join)
+  }
+}
+
 // Simple union-find for grouping the flat XML's nodes back into rungs (see
 // parseLadderXml below for why this is necessary rather than a positional
 // grouping).
@@ -456,9 +526,25 @@ class UnionFind {
   }
 }
 
-export function parseLadderXml(pouName: string, ldXml: unknown): { body: LadderFlowType; warnings: string[] } {
+export function parseLadderXml(pouName: string, ldXml: unknown, addData?: unknown): { body: LadderFlowType; warnings: string[] } {
   const ld = asRecord(ldXml)
   const warnings: string[] = []
+  const editorGraph = decodeLdGraph(addData, ldXml)
+  if (editorGraph.warning) warnings.push(`POU "${pouName}": ${editorGraph.warning}`)
+  if (editorGraph.rungs) {
+    // Re-emit the restored authoring graph and independently compare its
+    // executable connectivity with the actual PLCopen XML. The extension's
+    // stored signature alone cannot vouch for graph contents modified later.
+    try {
+      const rebuilt = ladderToXml(editorGraph.rungs).body.LD
+      if (ldExecutableSignature(rebuilt) === ldExecutableSignature(ldXml)) {
+        return { body: { name: pouName, updated: false, rungs: editorGraph.rungs }, warnings }
+      }
+    } catch {
+      // Invalid graphs must never be allowed to replace executable PLCopen.
+    }
+    warnings.push(`POU "${pouName}": LD editor junction graph conflicts with PLCopen wiring; using PLCopen connections instead`)
+  }
   const nodes: LadderParsedNode[] = []
   const nodeIdByNumericId = new Map<string, string>()
   const pendingEdges: PendingEdge[] = []
@@ -532,6 +618,12 @@ export function parseLadderXml(pouName: string, ldXml: unknown): { body: LadderF
     forest.union(sourceNodeId, targetNodeId)
   }
 
+  // Recover simple parallel junctions from ordinary PLCopen connectivity for
+  // documents saved by older editors without our authoring metadata.
+  restoreUnambiguousParallel(nodes, edges)
+  for (const node of nodes) forest.find(node.id)
+  for (const edge of edges) forest.union(edge.source, edge.target)
+
   // Rungs aren't wrapped by any XML element in this dialect — all rungs
   // flatten into one shared <LD> (see ladderToXml) and are only
   // reconstructable by tracing which nodes are connected to each other.
@@ -577,6 +669,19 @@ export function parseLadderXml(pouName: string, ldXml: unknown): { body: LadderF
       edges: rungEdges,
     }
   })
+
+  // A legacy file with two disconnected fragments where only one contains
+  // the left rail and the other the right rail is *not* a valid successful
+  // restore. It may have lost a parallel-to-series connection during export.
+  if (rungs.length > 1) {
+    const leftOnly = rungs.some((rung) => rung.nodes.some((n) => n.type === 'powerRail' && n.data.variant === 'left') &&
+      !rung.nodes.some((n) => n.type === 'powerRail' && n.data.variant === 'right'))
+    const rightOnly = rungs.some((rung) => rung.nodes.some((n) => n.type === 'powerRail' && n.data.variant === 'right') &&
+      !rung.nodes.some((n) => n.type === 'powerRail' && n.data.variant === 'left'))
+    if (leftOnly && rightOnly) warnings.push(
+      `POU "${pouName}": disconnected LD rail fragments detected; original wiring cannot be inferred from PLCopen XML`,
+    )
+  }
 
   return { body: { name: pouName, updated: false, rungs }, warnings }
 }

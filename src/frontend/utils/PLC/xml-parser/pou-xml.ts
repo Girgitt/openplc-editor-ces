@@ -87,7 +87,7 @@ export function parsePousXml(pouXml: unknown): { pous: PLCPou[]; warnings: strin
       continue
     }
     if (body.LD !== undefined) {
-      const { body: ldBody, warnings: ldWarnings } = parseLadderXml(name, body.LD)
+      const { body: ldBody, warnings: ldWarnings } = parseLadderXml(name, body.LD, body.addData)
       warnings.push(...ldWarnings)
       pous.push({
         name,

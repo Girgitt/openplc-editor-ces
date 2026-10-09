@@ -13,7 +13,7 @@ import { chromium } from '@playwright/test'
 import { createCesEditorServer } from '../../scripts/ces-web-server.mjs'
 import { PROJECT_CASES, createFixture } from './fixtures.mjs'
 import { clickBooleanDebugAction, openNativeDebugger } from './debug-controls.mjs'
-import { runLdBooleanTruthTable, runRsSetReset } from './scenarios.mjs'
+import { runLdBooleanTruthTable, runLdMixedTruthTable, runRsSetReset } from './scenarios.mjs'
 
 const root = resolve(fileURLToPath(new URL('../..', import.meta.url)))
 const artifacts = resolve(process.env.CES_SIM_E2E_ARTIFACTS ?? join(root, 'test-results', 'ces-simulation-e2e'))
@@ -115,6 +115,13 @@ async function runCase(browser, fixture) {
       assert.ok(Array.isArray(rungs) && rungs.length, 'No saved graphical rungs')
       assert.ok(rungs.every((r) => Array.isArray(r.nodes) && r.nodes.length && Array.isArray(r.edges) && r.edges.length),
         'Saved graphical network lacks nodes or semantic edges')
+      if (fixture.name === 'M53_LD_MIXED') {
+        assert.equal(rungs.length, 1, 'Parallel-then-series LD must remain one rung after save')
+        assert.equal(rungs[0].nodes.filter((node) => node.type === 'parallel').length, 2,
+          'LD parallel junction nodes must survive save')
+        assert.ok(rungs[0].edges.some((edge) => edge.source === 'branch-close' && edge.target === 'contact-v3'),
+          'LD downstream series contact is disconnected from the parallel close')
+      }
       if (fixture.ext === 'fbd') {
         const rs = rungs[0].nodes.find((n) => n.data?.variant?.name === 'RS')
         assert.ok(rs, 'Saved RS block was lost')
@@ -167,7 +174,9 @@ async function runCase(browser, fixture) {
         return output && boolValue(output) === expected ? output : false
       }, description, 30000)
 
-      if (fixture.ext === 'ld') {
+      if (fixture.name === 'M53_LD_MIXED') {
+        await runLdMixedTruthTable({ forceBool, releaseBool, expectOutput })
+      } else if (fixture.ext === 'ld') {
         await runLdBooleanTruthTable({
           isAnd: fixture.name === 'M53_LD_AND', forceBool, releaseBool, expectOutput,
         })
@@ -227,7 +236,7 @@ async function runCase(browser, fixture) {
 async function main() {
   const args = process.argv.slice(2)
   if (args.includes('--help')) {
-    console.log('Usage: scripts/test-ces-simulation-e2e.sh [--case M53_FBD_RS|M53_LD_AND|M53_LD_OR|M53_ST_TON]')
+    console.log('Usage: scripts/test-ces-simulation-e2e.sh [--case M53_FBD_RS|M53_LD_AND|M53_LD_OR|M53_LD_MIXED|M53_ST_TON]')
     console.log('Opt-in real-browser + real-compiler + simulator/force acceptance tests.')
     return
   }
