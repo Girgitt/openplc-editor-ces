@@ -60,6 +60,7 @@ import { useDeviceConnectionMonitor } from '../hooks/use-device-connection-monit
 import { useDevicePlcState } from '../hooks/use-device-plc-state'
 import { useRuntimePolling } from '../hooks/use-runtime-polling'
 import { forceDebugVariable, releaseDebugVariable } from '../services/debug-force-variable'
+import { installCesProgramForceBridge } from '../services/ces-program-force-bridge'
 import { buildAllProjectFileContentsPure } from '../services/save-actions'
 import { useOpenPLCStore } from '../store'
 import { cn } from '../utils/cn'
@@ -179,6 +180,9 @@ const WorkspaceScreen = () => {
       loadedSerialized: baselineContent,
     })
   }, [projectPath, rawLoadedContent, loadedSerialized, initBaseline])
+
+  // CES-owned Live Values commands target this exact renderer's native debugger.
+  useEffect(() => installCesProgramForceBridge(debuggerPort), [debuggerPort])
 
   useRuntimePolling()
   // Mirrors a baremetal target's run/stop state from the held device link's existing liveness tick (no timer of its own).
