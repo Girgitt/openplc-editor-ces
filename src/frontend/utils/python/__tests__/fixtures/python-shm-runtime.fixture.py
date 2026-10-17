@@ -1,4 +1,3 @@
-
 # ===================================================================
 # OpenPLC shared-memory runtime — fixed, identical in every build.
 # The layout tables above are the only project-specific part; this
@@ -14,34 +13,34 @@ def _shm_total(layout):
 
 def _shm_get(buf, kind, off):
     """One field out of the segment."""
-    if kind == 'str':
+    if kind == "str":
         n = buf[off]
         n = max(0, min(n, _STR_CHARS))
-        return bytes(buf[off + 1:off + 1 + n]).decode('utf-8', errors='ignore')
-    if kind == 'wstr':
+        return bytes(buf[off + 1 : off + 1 + n]).decode("utf-8", errors="ignore")
+    if kind == "wstr":
         # The prefix counts UTF-16 code units, so the byte slice is twice it.
         n = buf[off]
         n = max(0, min(n, _STR_CHARS))
-        return bytes(buf[off + 1:off + 1 + n * 2]).decode('utf-16-le', errors='ignore')
-    return struct.unpack_from('=' + kind, buf, off)[0]
+        return bytes(buf[off + 1 : off + 1 + n * 2]).decode("utf-16-le", errors="ignore")
+    return struct.unpack_from("=" + kind, buf, off)[0]
 
 
 def _shm_put(buf, kind, off, value):
     """One field into the segment."""
-    if kind == 'str':
-        body = str(value).encode('utf-8')[:_STR_CHARS]
+    if kind == "str":
+        body = str(value).encode("utf-8")[:_STR_CHARS]
         buf[off] = len(body)
-        buf[off + 1:off + 1 + _STR_CHARS] = body.ljust(_STR_CHARS, b'\0')
+        buf[off + 1 : off + 1 + _STR_CHARS] = body.ljust(_STR_CHARS, b"\0")
         return
-    if kind == 'wstr':
+    if kind == "wstr":
         # Truncate on a code-unit boundary, never mid-unit. Integer division
         # rather than the modulo operator, deliberately: see the note above.
-        body = str(value).encode('utf-16-le')[:_STR_CHARS * 2]
-        body = body[:(len(body) // 2) * 2]
+        body = str(value).encode("utf-16-le")[: _STR_CHARS * 2]
+        body = body[: (len(body) // 2) * 2]
         buf[off] = len(body) // 2
-        buf[off + 1:off + 1 + _STR_CHARS * 2] = body.ljust(_STR_CHARS * 2, b'\0')
+        buf[off + 1 : off + 1 + _STR_CHARS * 2] = body.ljust(_STR_CHARS * 2, b"\0")
         return
-    struct.pack_into('=' + kind, buf, off, value)
+    struct.pack_into("=" + kind, buf, off, value)
 
 
 def _node_get(holder, key):

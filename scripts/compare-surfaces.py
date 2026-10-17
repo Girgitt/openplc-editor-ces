@@ -47,7 +47,8 @@ def tracked_files(repo: Path) -> set[str] | None:
     try:
         out = subprocess.run(
             ["git", "-C", str(repo), "ls-files", "-z"],
-            capture_output=True, check=True,
+            capture_output=True,
+            check=True,
         ).stdout.decode()
         result: set[str] | None = {p for p in out.split("\0") if p}
     except (subprocess.CalledProcessError, FileNotFoundError):
@@ -55,6 +56,7 @@ def tracked_files(repo: Path) -> set[str] | None:
         result = None
     _TRACKED_CACHE[repo] = result
     return result
+
 
 SURFACES = [
     "frontend",
@@ -82,9 +84,9 @@ MAPPED_SURFACES = [
         # Editor-only by design. Each is a desktop-compile concern the web
         # bundle (AVR8js simulator) has no use for:
         "editor_only_prefixes": [
-            "avr-libstdcpp/",         # AVR toolchain ships no C++ stdlib
-            "hal/",                   # ~30 per-board HALs; web simulates one
-            "show_properties_dummy/", # desktop sketch-probe stub
+            "avr-libstdcpp/",  # AVR toolchain ships no C++ stdlib
+            "hal/",  # ~30 per-board HALs; web simulates one
+            "show_properties_dummy/",  # desktop sketch-probe stub
         ],
     },
 ]
@@ -106,7 +108,9 @@ def is_test_file(path: Path) -> bool:
     if "__tests__" in path.parts:
         return True
     name = path.name
-    return any(name.endswith(suffix) for suffix in (".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx"))
+    return any(
+        name.endswith(suffix) for suffix in (".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx")
+    )
 
 
 def collect_hashes(root: Path, surface: str) -> dict[str, str]:
@@ -131,9 +135,7 @@ def collect_hashes(root: Path, surface: str) -> dict[str, str]:
     return result
 
 
-def compare_surface(
-    web_root: Path, editor_root: Path, surface: str
-) -> dict:
+def compare_surface(web_root: Path, editor_root: Path, surface: str) -> dict:
     web_hashes = collect_hashes(web_root, surface)
     editor_hashes = collect_hashes(editor_root, surface)
     all_files = sorted(set(web_hashes) | set(editor_hashes))
@@ -212,8 +214,7 @@ def compare_mapped(web_repo: Path, editor_repo: Path, mapped: dict) -> dict:
         elif web_hashes[rel] != editor_hashes[rel]:
             diffs.append({"file": rel, "reason": "hash_mismatch"})
 
-    checked = len(set(web_hashes) | {r for r in editor_hashes
-                                     if not r.startswith(editor_only)})
+    checked = len(set(web_hashes) | {r for r in editor_hashes if not r.startswith(editor_only)})
     return {
         "match": len(diffs) == 0,
         "files_checked": checked,
