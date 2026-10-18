@@ -35,6 +35,7 @@ import { runCreate } from './commands/create'
 import { type DebugContext, runDebug } from './commands/debug'
 import { runDevices } from './commands/devices'
 import { runInstallCli } from './commands/install-cli'
+import { runImportPlcopen } from './commands/import-plcopen'
 import { runPackages } from './commands/packages'
 import { runDaemonFromStdin } from './daemon-entry'
 import { ErrorCode, ExitCode, type ExitCodeValue } from './exit-codes'
@@ -78,6 +79,7 @@ Usage
                             [--language st|il|ld|sfc|fbd] [--time <interval>]
                             [--force]   (overwrite an existing destination)
   openplc-cli create --from-json <file>                     (fixture-friendly form)
+  openplc-cli import-plcopen <source.xml> --project <newly-created-native-project>
   openplc-cli install-cli                                   (put openplc-cli on your PATH)
   openplc-cli devices [--timeout <ms>]
   openplc-cli packages list                                 (boards --target accepts, and their pins)
@@ -194,6 +196,8 @@ async function dispatch(args: ParsedArgs, reporter: Reporter): Promise<ExitCodeV
   switch (args.command) {
     case 'create':
       return (await runCreate(args, reporter)).exitCode
+    case 'import-plcopen':
+      return (await runImportPlcopen(args, reporter)).exitCode
     case 'devices':
       return (await runDevices(args, reporter)).exitCode
     case 'install-cli':
