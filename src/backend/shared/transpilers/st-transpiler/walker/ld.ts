@@ -853,7 +853,18 @@ function emitFunctionCall(state: WalkerState, node: RFNode, data: BlockData): vo
       ])
     }
   }
-  if (primaryName === null) return
+  if (primaryName === null) {
+    // A wired output must never be emitted as an undeclared _TMP_* ref.
+    // This is typically an imported PLCopen block whose output signature
+    // could not be recovered from either its variant or visible handles.
+    if ((state.outgoing.get(node.id) ?? []).length > 0) {
+      throw new Error(
+        `Function ${data.typeName} (${node.id}) has no resolved primary output signature; ` +
+          'restore its block interface before compiling',
+      )
+    }
+    return
+  }
 
   state.program.push([state.currentIndent, []])
   state.program.push([primaryName, [...info, 'output', 0]])

@@ -207,6 +207,25 @@ export function asBlockData(data: Record<string, unknown>): BlockData | null {
       else if (cls === 'inOut' || cls === 'inout') inputs.push(name)
     }
   }
+  // PLCopen <block> carries formal pin names, but not the IEC typed
+  // signature from the editor's library. On CES save/reopen the imported
+  // variant can therefore be empty until the library-restamp pass runs.
+  // Recover only those pin names which the imported block actually exposes;
+  // do not invent a library signature or alter an already typed variant.
+  const pinNames = (key: 'inputHandles' | 'outputHandles'): string[] => {
+    const raw = data[key]
+    if (!Array.isArray(raw)) return []
+    const names: string[] = []
+    for (const handle of raw) {
+      if (!isObject(handle)) continue
+      const name = asString(handle['id'])
+      if (name && !names.includes(name)) names.push(name)
+    }
+    return names
+  }
+  if (inputs.length === 0) inputs.push(...pinNames('inputHandles').filter((name) => name !== 'EN'))
+  if (outputs.length === 0) outputs.push(...pinNames('outputHandles').filter((name) => name !== 'ENO'))
+
   const rawNumericId = data['numericId']
   const numericId =
     typeof rawNumericId === 'string'
