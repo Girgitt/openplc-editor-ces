@@ -161,9 +161,46 @@ export function computeConnectionTypes(body: RFBody, ctx: TypeContext): Map<stri
         const data = asBlockData(node.data)
         if (data === null) break
         const infos = ctx.resolveBlock(data.typeName)
-        if (infos !== null) {
+        // An imported PLCopen block retains the wired pin names, but its
+        // library variant may have no (or only a partial) typed signature.
+        // Such a signature is not usable for inference: accepting it makes
+        // intermediate function outputs silently remain ANY and yields
+        // invalid ST declarations (e.g. _TMP_SUB3_OUT : ANY).
+        const wired = wiredInputHandles(graph, node, data).filter((name) => name !== 'EN')
+        const outputs = outputHandles(data).filter((name) => name !== 'ENO')
+        const complete =
+          infos !== null &&
+          wired.every((name) => infos.inputs.some((formal) => formal.name === name)) &&
+          outputs.every((name) => infos.outputs.some((formal) => formal.name === name))
+        const homogeneous = new Set(['ADD', 'SUB', 'MUL', 'DIV', 'MOD', 'MIN', 'MAX', 'LIMIT', 'ABS', 'MOVE', 'NEG', 'AND', 'OR', 'XOR', 'NOT'])
+        const safeGeneric = homogeneous.has(data.typeName.toUpperCase())
+        // A signature with all formal names but an unknown result is also
+        // unsafe for non-homogeneous blocks (GT/SEL/etc.).
+        if (
+          !safeGeneric && data.blockKind !== 'function-block-instance' &&
+          (infos === null || !complete || outputs.some((name) => {
+            const formal = infos.outputs.find((item) => item.name === name)
+            return formal === undefined || formal.type.startsWith('ANY')
+          }))
+        ) {
+          throw new Error(
+            `Missing typed IEC signature for ${data.typeName} (block ${node.id}); ` +
+              'restore the block library signature before compiling',
+          )
+        }
+        if (complete && infos !== null) {
           computeBlockInputTypes(graph, pt, node, data, infos)
+        } else if (data.blockKind === 'function-block-instance') {
+          // FB interfaces can mix unrelated types (PID has BOOL, REAL and
+          // TIME pins). An all-ANY fallback would wrongly infer the output
+          // as e.g. TIME from CYCLE. Its actual member type must come from
+          // a restored, typed library/POU signature.
+          continue
         } else {
+          // Without a complete library signature, all-ANY inference is sound
+          // only for known homogeneous IEC operations. E.g. GT has a BOOL
+          // result while its operands are numeric; silently making its OUT
+          // REAL would produce plausible but incorrect source code.
           for (const handle of wiredInputHandles(graph, node, data)) {
             const pin = pinIn(node.id, handle)
             const source = sourcePin(graph, node.id, handle)
@@ -185,6 +222,24 @@ export function computeConnectionTypes(body: RFBody, ctx: TypeContext): Map<stri
   }
 
   for (const { node, data } of deferred) {
+    // Detect conflicting concrete types rather than depending on whichever
+    // input happened to be visited last. Numeric conversions must be explicit.
+    const concrete = new Set<string>()
+    for (const handle of wiredInputHandles(graph, node, data)) {
+      const source = sourcePin(graph, node.id, handle)
+      const candidate = source !== null ? pt.types.get(source) : undefined
+      if (candidate !== undefined && !candidate.startsWith('ANY')) concrete.add(candidate)
+    }
+    const outputType = outputHandles(data)
+      .map((out) => pt.types.get(pinOut(node.id, out)))
+      .filter((candidate): candidate is string => candidate !== undefined && !candidate.startsWith('ANY'))
+    for (const candidate of outputType) concrete.add(candidate)
+    if (concrete.size > 1) {
+      throw new Error(
+        `Conflicting IEC types for ${data.typeName} (block ${node.id}): ${[...concrete].join(', ')}; ` +
+          'insert an explicit conversion before compiling',
+      )
+    }
     const infos = synthesizePermissiveBlockInfos(graph, node, data)
     computeBlockInputTypes(graph, pt, node, data, infos)
   }

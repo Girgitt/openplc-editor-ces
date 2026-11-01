@@ -115,8 +115,15 @@ function collectBlockSignatures(project: TranspileProject): Map<string, BlockInf
     for (const node of nodes) {
       if (!isRecord(node) || node.type !== 'block' || !isRecord(node.data)) continue
       const infos = blockInfosFromVariant(node.data.variant)
-      if (infos === null || userPouNames.has(infos.name) || registry.has(infos.name)) continue
-      registry.set(infos.name, infos)
+      if (infos === null || userPouNames.has(infos.name)) continue
+      const earlier = registry.get(infos.name)
+      // The first occurrence can be an incomplete PLCopen placeholder;
+      // prefer an instance with more typed formals instead of freezing it.
+      const score = (signature: BlockInfos): number =>
+        [...signature.inputs, ...signature.outputs].reduce(
+          (count, io) => count + (io.type.startsWith('ANY') ? 1 : 10), 0,
+        )
+      if (earlier === undefined || score(infos) > score(earlier)) registry.set(infos.name, infos)
     }
   }
   for (const pou of project.pous) {

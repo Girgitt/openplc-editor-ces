@@ -1,4 +1,5 @@
 import { generateGraphicalPou } from '@root/backend/shared/transpilers/st-transpiler/emit/pou-graphical'
+import { compileStlib } from '@root/backend/shared/library/compile-stlib'
 import type { TranspilePou, TranspileProject } from '@root/backend/shared/transpilers/st-transpiler/types'
 import { asBlockData } from '@root/backend/shared/transpilers/st-transpiler/walker/narrow'
 import type { RFNode, RFEdge } from '@root/backend/shared/transpilers/st-transpiler/walker/types'
@@ -99,5 +100,154 @@ describe('FBD function import without a restored typed block signature', () => {
     expect(() => generateGraphicalPou(pou, project)).toThrow(
       'Function LIMIT (limit) has no resolved primary output signature',
     )
+  })
+})
+
+// Canonical CES FBD import can list blocks before their input nodes, with
+// only persisted PLCopen formal pin names and no library types. The simple
+// P-controller LevelSP - LevelPV -> MUL(Kp) -> DIV -> LIMIT exercised this.
+const arithmetic = (name: string, numericId: string): RFNode => ({
+  id: name.toLowerCase(),
+  type: 'block',
+  position: { x: 120 + 140 * Number(numericId), y: 180 },
+  data: {
+    numericId,
+    executionOrder: 0,
+    variable: { name },
+    variant: { name, type: 'function', variables: [] },
+    inputHandles: ['IN1', 'IN2'].map((id) => ({ id })),
+    outputHandles: [{ id: 'OUT' }],
+  },
+})
+
+function pControllerWithImportedBlocks(): { pou: TranspilePou; project: TranspileProject } {
+  const sub = arithmetic('SUB', '3')
+  const mul = arithmetic('MUL', '4')
+  const div = arithmetic('DIV', '6')
+  const limitBlock = limit()
+  const readSP = input('sp', 'LevelSPPct', 180)
+  const readPV = input('pv', 'LevelPVPct', 220)
+  const readKP = input('kp', 'Kp', 260)
+  const readDivisor = input('divisor', 'Divisor', 300)
+  const { pou, project } = projectWithLimit(limitBlock)
+  pou.interface.variables.push(
+    { name: 'LevelSPPct', class: 'input', type: { definition: 'base-type', value: 'REAL' } },
+    { name: 'LevelPVPct', class: 'input', type: { definition: 'base-type', value: 'REAL' } },
+    { name: 'Kp', class: 'input', type: { definition: 'base-type', value: 'REAL' } },
+    { name: 'Divisor', class: 'input', type: { definition: 'base-type', value: 'REAL' } },
+  )
+  if (pou.body.language !== 'fbd') throw new Error('expected FBD')
+  pou.body.value.rung.nodes = [
+    limitBlock, sub, mul, div, input('zero', '0.0', 0), input('hundred', '100.0', 100),
+    readSP, readPV, readKP, readDivisor, destination,
+  ]
+  pou.body.value.rung.edges = [
+    { id: 'e1', source: 'zero', target: 'limit', targetHandle: 'MN' },
+    { id: 'e2', source: 'div', sourceHandle: 'OUT', target: 'limit', targetHandle: 'IN' },
+    { id: 'e3', source: 'hundred', target: 'limit', targetHandle: 'MX' },
+    { id: 'e4', source: 'limit', sourceHandle: 'OUT', target: 'out' },
+    { id: 'e5', source: 'sp', target: 'sub', targetHandle: 'IN1' },
+    { id: 'e6', source: 'pv', target: 'sub', targetHandle: 'IN2' },
+    { id: 'e7', source: 'sub', sourceHandle: 'OUT', target: 'mul', targetHandle: 'IN1' },
+    { id: 'e8', source: 'kp', target: 'mul', targetHandle: 'IN2' },
+    { id: 'e9', source: 'mul', sourceHandle: 'OUT', target: 'div', targetHandle: 'IN1' },
+    { id: 'e10', source: 'divisor', target: 'div', targetHandle: 'IN2' },
+  ]
+  return { pou, project }
+}
+
+describe('FBD arithmetic across imported untyped block signatures', () => {
+  it('infers concrete REAL temporaries for SUB, MUL and DIV, including blocks before their input nodes', () => {
+    const { pou, project } = pControllerWithImportedBlocks()
+    const st = generateGraphicalPou(pou, project).map((chunk) => chunk[0]).join('')
+    for (const declaration of ['_TMP_SUB3_OUT', '_TMP_MUL4_OUT', '_TMP_DIV6_OUT', '_TMP_LIMIT1_OUT']) {
+      expect(st).toContain(`${declaration} : REAL;`)
+    }
+    expect(st).toContain('_TMP_SUB3_OUT := SUB(LevelSPPct, LevelPVPct);')
+    expect(st).toContain('_TMP_MUL4_OUT := MUL(_TMP_SUB3_OUT, Kp);')
+    expect(st).toContain('_TMP_DIV6_OUT := DIV(_TMP_MUL4_OUT, Divisor);')
+    expect(st).toContain('DemandPct := _TMP_LIMIT1_OUT;')
+    expect(st).not.toMatch(/_TMP_\w+\s*:\s*ANY(?:_\w+)?\s*;/)
+  })
+
+  it('fails with a clear diagnostic for a truly untyped function output, not invalid ST ANY', () => {
+    const { pou, project } = pControllerWithImportedBlocks()
+    if (pou.body.language !== 'fbd') throw new Error('expected FBD')
+    pou.body.value.rung.nodes = [
+      arithmetic('SUB', '3'), input('n1', '1.0', 10), input('n2', '2.0', 30),
+    ]
+    pou.body.value.rung.edges = [
+      { id: 'e1', source: 'n1', target: 'sub', targetHandle: 'IN1' },
+      { id: 'e2', source: 'n2', target: 'sub', targetHandle: 'IN2' },
+    ]
+    expect(() => generateGraphicalPou(pou, project)).toThrow('Cannot infer concrete IEC type for SUB.OUT')
+  })
+})
+
+
+describe('Recovered arithmetic type safety', () => {
+  it('recovers missing handle names from a partially restored library variant', () => {
+    const block = arithmetic('MUL', '4')
+    if (block.data.variant && typeof block.data.variant === 'object') {
+      (block.data.variant as Record<string, unknown>).variables = [
+        { name: 'IN1', class: 'input', type: { value: 'REAL' } },
+      ]
+    }
+    expect(asBlockData(block.data)).toMatchObject({inputs: ['IN1', 'IN2'], outputs: ['OUT']})
+  })
+
+  it('rejects mixed REAL and BOOL on a homogeneous arithmetic operation', () => {
+    const { pou, project } = pControllerWithImportedBlocks()
+    pou.interface.variables.push({ name: 'Enabled', class: 'input', type: {definition:'base-type', value:'BOOL'} })
+    if (pou.body.language !== 'fbd') throw new Error('expected FBD')
+    pou.body.value.rung.nodes.push(input('enabled', 'Enabled', 400))
+    const edge = pou.body.value.rung.edges.find((it) => it.target === 'mul' && it.targetHandle === 'IN2')
+    if (!edge) throw new Error('missing MUL.IN2')
+    edge.source = 'enabled'
+    expect(() => generateGraphicalPou(pou, project)).toThrow('Conflicting IEC types for MUL')
+  })
+
+  it('does not treat a complete name-only GT signature as a REAL output', () => {
+    const { pou, project } = pControllerWithImportedBlocks()
+    if (pou.body.language !== 'fbd') throw new Error('expected FBD')
+    const comparator = arithmetic('GT', '7')
+    ;(comparator.data.variant as Record<string, unknown>).variables = [
+      {name:'IN1',class:'input'}, {name:'IN2',class:'input'}, {name:'OUT',class:'output'},
+    ]
+    pou.body.value.rung.nodes.push(comparator)
+    pou.body.value.rung.edges.push(
+      {id:'cmp1',source:'sp',target:'gt',targetHandle:'IN1'},
+      {id:'cmp2',source:'pv',target:'gt',targetHandle:'IN2'},
+    )
+    expect(() => generateGraphicalPou(pou, project)).toThrow('Missing typed IEC signature for GT')
+  })
+
+  it('rejects incomplete signatures for non-homogeneous comparator functions', () => {
+    const { pou, project } = pControllerWithImportedBlocks()
+    if (pou.body.language !== 'fbd') throw new Error('expected FBD')
+    const comparator = arithmetic('GT', '7')
+    pou.body.value.rung.nodes.push(comparator)
+    pou.body.value.rung.edges.push(
+      {id:'cmp1',source:'sp',target:'gt',targetHandle:'IN1'},
+      {id:'cmp2',source:'pv',target:'gt',targetHandle:'IN2'},
+    )
+    expect(() => generateGraphicalPou(pou, project)).toThrow('Missing typed IEC signature for GT')
+  })
+})
+
+// The JS generation assertions alone cannot detect ST unsupported by the
+// native compiler. This is a required pre-pin acceptance test with the real
+// STruC++ package (never mock compileStlib here).
+describe('Native STruC++ acceptance for imported FBD arithmetic', () => {
+  it('real STruC++ accepts the generated SUB/MUL/DIV/LIMIT program', () => {
+    const { pou, project } = pControllerWithImportedBlocks()
+    const st = generateGraphicalPou(pou, project).map((chunk) => chunk[0]).join('')
+    const compiled = compileStlib(
+      [{fileName: 'PumpRegulator.st', source: st}],
+      { name: 'ces_fbd_arithmetic', version: '1.0.0', namespace: 'ces_fbd_arithmetic' },
+    )
+    if (!compiled.success) {
+      throw new Error(`Native STruC++ rejected imported arithmetic: ${JSON.stringify(compiled.errors ?? [])}`)
+    }
   })
 })

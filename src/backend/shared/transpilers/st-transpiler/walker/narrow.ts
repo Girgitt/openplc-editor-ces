@@ -223,8 +223,14 @@ export function asBlockData(data: Record<string, unknown>): BlockData | null {
     }
     return names
   }
-  if (inputs.length === 0) inputs.push(...pinNames('inputHandles').filter((name) => name !== 'EN'))
-  if (outputs.length === 0) outputs.push(...pinNames('outputHandles').filter((name) => name !== 'ENO'))
+  // A partially restored variant is not authoritative for the full I/O
+  // handle set. Merge persisted PLCopen pins without duplicating formals.
+  for (const name of pinNames('inputHandles')) {
+    if (name !== 'EN' && !inputs.includes(name)) inputs.push(name)
+  }
+  for (const name of pinNames('outputHandles')) {
+    if (name !== 'ENO' && !outputs.includes(name)) outputs.push(name)
+  }
 
   const rawNumericId = data['numericId']
   const numericId =

@@ -104,6 +104,8 @@ interface WalkerState {
   warnings: string[]
   /** Pin types from computeConnectionTypes; empty without a TypeContext. */
   connTypes: Map<string, string>
+  /** Complete POU generation must not emit invalid generic ST declarations. */
+  requireConcreteTemps: boolean
 }
 
 function rungHeight(rung: RFRung): number {
@@ -177,6 +179,7 @@ export function emitLdBody(body: RFBody, typeContext?: TypeContext): EmitResult 
     yOffset: new Map(),
     warnings: [],
     connTypes: typeContext ? computeConnectionTypes(body, typeContext) : new Map(),
+    requireConcreteTemps: typeContext !== undefined,
   }
 
   // Index every node + edge from every rung up front.  Sinks are then
@@ -838,6 +841,12 @@ function emitFunctionCall(state: WalkerState, node: RFNode, data: BlockData): vo
     const out = data.outputs[i]
     const tempName = `_TMP_${data.typeName}${data.numericId}_${out}`
     const tempType = state.connTypes.get(pinOut(node.id, out)) ?? (out === 'ENO' ? 'BOOL' : 'ANY')
+    if (state.requireConcreteTemps && tempType.startsWith('ANY')) {
+      throw new Error(
+        `Cannot infer concrete IEC type for ${data.typeName}.${out} (block ${node.id}); ` +
+          'check the restored block pin signature and connect a typed REAL/INT source or destination',
+      )
+    }
     state.functionTempVars.push({
       name: tempName,
       type: tempType,
