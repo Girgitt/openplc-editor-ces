@@ -207,13 +207,51 @@ describe('Recovered arithmetic type safety', () => {
     expect(() => generateGraphicalPou(pou, project)).toThrow('Conflicting IEC types for MUL')
   })
 
-  it('does not treat a complete name-only GT signature as a REAL output', () => {
+  it('recovers a BOOL result from a complete name-only GT signature', () => {
     const { pou, project } = pControllerWithImportedBlocks()
     if (pou.body.language !== 'fbd') throw new Error('expected FBD')
     const comparator = arithmetic('GT', '7')
     ;(comparator.data.variant as Record<string, unknown>).variables = [
       {name:'IN1',class:'input'}, {name:'IN2',class:'input'}, {name:'OUT',class:'output'},
     ]
+    pou.interface.variables.push({ name: 'IsHigh', class: 'output', type: {definition:'base-type', value:'BOOL'} })
+    pou.body.value.rung.nodes.push(comparator, {
+      ...destination,
+      id: 'gt-result',
+      data: { numericId: '8', variant: 'output-variable', variable: { name: 'IsHigh' } },
+    })
+    pou.body.value.rung.edges.push(
+      {id:'cmp1',source:'sp',target:'gt',targetHandle:'IN1'},
+      {id:'cmp2',source:'pv',target:'gt',targetHandle:'IN2'},
+      {id:'cmp3',source:'gt',sourceHandle:'OUT',target:'gt-result'},
+    )
+    const st = generateGraphicalPou(pou, project).map((chunk) => chunk[0]).join('')
+    expect(st).toContain('_TMP_GT7_OUT : BOOL;')
+    expect(st).toContain('_TMP_GT7_OUT := GT(LevelSPPct, LevelPVPct);')
+    expect(st).toContain('IsHigh := _TMP_GT7_OUT;')
+    expect(st).not.toContain('_TMP_GT7_OUT : REAL;')
+  })
+
+  it('recovers a BOOL result when a GT signature is entirely absent', () => {
+    const { pou, project } = pControllerWithImportedBlocks()
+    if (pou.body.language !== 'fbd') throw new Error('expected FBD')
+    const comparator = arithmetic('GT', '7')
+    pou.body.value.rung.nodes.push(comparator)
+    pou.body.value.rung.edges.push(
+      {id:'cmp1',source:'sp',target:'gt',targetHandle:'IN1'},
+      {id:'cmp2',source:'pv',target:'gt',targetHandle:'IN2'},
+    )
+    const st = generateGraphicalPou(pou, project).map((chunk) => chunk[0]).join('')
+    expect(st).toContain('_TMP_GT7_OUT : BOOL;')
+    expect(st).toContain('_TMP_GT7_OUT := GT(LevelSPPct, LevelPVPct);')
+    expect(st).not.toMatch(/_TMP_GT7_OUT\s*:\s*ANY(?:_\w+)?\s*;/)
+  })
+
+  it('still rejects a malformed GT with an unexpected third input pin', () => {
+    const { pou, project } = pControllerWithImportedBlocks()
+    if (pou.body.language !== 'fbd') throw new Error('expected FBD')
+    const comparator = arithmetic('GT', '7')
+    ;(comparator.data.inputHandles as Array<{id:string}>).push({id:'EXTRA'})
     pou.body.value.rung.nodes.push(comparator)
     pou.body.value.rung.edges.push(
       {id:'cmp1',source:'sp',target:'gt',targetHandle:'IN1'},
@@ -222,17 +260,6 @@ describe('Recovered arithmetic type safety', () => {
     expect(() => generateGraphicalPou(pou, project)).toThrow('Missing typed IEC signature for GT')
   })
 
-  it('rejects incomplete signatures for non-homogeneous comparator functions', () => {
-    const { pou, project } = pControllerWithImportedBlocks()
-    if (pou.body.language !== 'fbd') throw new Error('expected FBD')
-    const comparator = arithmetic('GT', '7')
-    pou.body.value.rung.nodes.push(comparator)
-    pou.body.value.rung.edges.push(
-      {id:'cmp1',source:'sp',target:'gt',targetHandle:'IN1'},
-      {id:'cmp2',source:'pv',target:'gt',targetHandle:'IN2'},
-    )
-    expect(() => generateGraphicalPou(pou, project)).toThrow('Missing typed IEC signature for GT')
-  })
 })
 
 // The JS generation assertions alone cannot detect ST unsupported by the
