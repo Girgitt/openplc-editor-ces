@@ -18,6 +18,7 @@
  */
 
 import { HardwareModule } from '@root/backend/editor/hardware'
+import { bootstrapHeadlessSystemLibraries } from './bootstrap-libraries'
 import { ProjectService } from '@root/backend/editor/services'
 import { parseProjectFiles } from '@root/backend/shared/utils/parse-project-files'
 import { openPLCStoreBase } from '@root/frontend/store'
@@ -63,6 +64,13 @@ export async function loadProject(projectPath: string): Promise<LoadProjectResul
     // not validated, so a version-skewed main process must not crash a load.
     Array.isArray(raw.data.dataTypeFiles) ? raw.data.dataTypeFiles : [],
   )
+
+  // The graphical PLCopen importer recreates block pins without their IEC
+  // signature. GUI startup loads the installed .stlib catalog before opening
+  // a project; the CLI must do the same, in *each* invocation (import and
+  // compile run in separate processes). Hydration happens inside
+  // handleOpenProjectResponse, so populating this store afterward is too late.
+  bootstrapHeadlessSystemLibraries()
 
   // Boards first, exactly as the workspace screen does on load: target-capability
   // resolution and the debug-spec resolver both read `availableBoards`, and
