@@ -197,22 +197,29 @@ export class LibraryManagerModule {
    * instead of strucpp's per-symbol "function not found" cascade.
    */
   loadEnabledArchives(enabledNames: string[]): { archives: StlibArchiveDTO[]; missing: string[] } {
-    const archives: StlibArchiveDTO[] = []
-    for (const archive of this.readBundledArchives()) archives.push(archive)
+    // Built-in IEC libraries are not recorded in the user registry.  They are
+    // nevertheless valid project dependencies and are always linked.  Treat
+    // their manifest names as resolved *before* consulting user installs.
+    const archives = [...this.readBundledArchives()]
+    const resolved = new Set(archives.map((archive) => archive.manifest.name))
     const registry = this.readRegistry()
     const missing: string[] = []
-    for (const name of enabledNames) {
+    for (const name of new Set(enabledNames)) {
+      if (resolved.has(name)) continue
       const entry = registry.libraries[name]
       if (!entry) {
         missing.push(name)
         continue
       }
       const archive = this.readUserArchive(name, entry.stlibPath)
-      if (!archive) {
+      // A registry key pointing at a differently named archive must not
+      // silently satisfy a dependency on a different library.
+      if (!archive || archive.manifest.name !== name) {
         missing.push(name)
         continue
       }
       archives.push(archive)
+      resolved.add(name)
     }
     return { archives, missing }
   }

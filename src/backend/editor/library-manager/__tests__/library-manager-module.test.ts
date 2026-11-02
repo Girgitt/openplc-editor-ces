@@ -320,6 +320,57 @@ describe('LibraryManagerModule', () => {
   })
 
   describe('loadEnabledArchives', () => {
+    it('recognizes explicitly enabled bundled IEC libraries without a user registry entry', () => {
+      writeBundled(makeArchive('iec-standard-fb'))
+      writeBundled(makeArchive('additional-function-blocks'))
+      const result = makeModule().loadEnabledArchives([
+        'iec-standard-fb', 'additional-function-blocks',
+      ])
+      expect(result.archives.map((a) => a.manifest.name)).toEqual([
+        'additional-function-blocks', 'iec-standard-fb',
+      ])
+      expect(result.missing).toEqual([])
+    })
+
+    it('deduplicates explicitly enabled built-ins and repeated user library refs', async () => {
+      writeBundled(makeArchive('iec-standard-fb'))
+      const mod = makeModule()
+      const tmp = join(testRoot, 'oscat.stlib')
+      writeFileSync(tmp, JSON.stringify(makeArchive('oscat-basic')), 'utf-8')
+      await mod.installFromFile(tmp)
+
+      const result = mod.loadEnabledArchives([
+        'iec-standard-fb', 'iec-standard-fb', 'oscat-basic', 'oscat-basic',
+      ])
+      expect(result.archives.map((a) => a.manifest.name)).toEqual([
+        'iec-standard-fb', 'oscat-basic',
+      ])
+      expect(result.missing).toEqual([])
+    })
+
+    it('reports an enabled builtin as missing when its bundled archive is absent', () => {
+      const result = makeModule().loadEnabledArchives(['iec-standard-fb'])
+      expect(result.archives).toEqual([])
+      expect(result.missing).toEqual(['iec-standard-fb'])
+    })
+
+    it('rejects a corrupted user registry entry pointing to the wrong library', async () => {
+      const mod = makeModule()
+      const tmp = join(testRoot, 'correct.stlib')
+      writeFileSync(tmp, JSON.stringify(makeArchive('oscat-basic')), 'utf-8')
+      await mod.installFromFile(tmp)
+      // Simulate archive replacement after installation; the dependency
+      // must not silently link an unrelated library under the old name.
+      writeFileSync(
+        join(librariesDir, 'oscat-basic', 'oscat-basic.stlib'),
+        JSON.stringify(makeArchive('other-library')),
+        'utf-8',
+      )
+      const result = mod.loadEnabledArchives(['oscat-basic'])
+      expect(result.archives).toEqual([])
+      expect(result.missing).toEqual(['oscat-basic'])
+    })
+
     it('always returns bundled archives when the bundled dir exists', () => {
       writeBundled(makeArchive('iec-standard-fb'))
       const mod = makeModule()
