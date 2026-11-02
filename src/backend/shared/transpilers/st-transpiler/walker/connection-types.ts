@@ -37,7 +37,23 @@ export function pinOut(nodeId: string, handle = ''): string {
   return `out:${nodeId}:${handle}`
 }
 
-const STANDARD_IEC_COMPARISONS = new Set(['EQ', 'NE', 'GT', 'GE', 'LT', 'LE'])
+/**
+ * Standard IEC functions whose import signatures can be reconstructed from
+ * their formal pins, without guessing a project-specific FB interface.
+ * This is a typed contract for *families* of IEC operators, not a permissive
+ * all-ANY fallback. Other functions still require a library signature.
+ */
+type StandardIecFamily = 'comparison' | 'selection' | 'bitwise'
+const STANDARD_IEC_FAMILIES: Readonly<Record<string, StandardIecFamily>> = {
+  EQ: 'comparison', NE: 'comparison', GT: 'comparison', GE: 'comparison',
+  LT: 'comparison', LE: 'comparison', SEL: 'selection',
+  NOT: 'bitwise', AND: 'bitwise', OR: 'bitwise', XOR: 'bitwise',
+}
+const IEC_BIT_TYPES = new Set(['BOOL', 'BYTE', 'WORD', 'DWORD', 'LWORD'])
+const isConcrete = (type: string | undefined): type is string =>
+  type !== undefined && !type.toUpperCase().startsWith('ANY')
+const normalizeType = (type: string): string => type.toUpperCase()
+
 
 const LITERAL_TYPES: Record<string, string | null> = {
   T: 'TIME',
@@ -82,37 +98,76 @@ class PinTypes {
   }
 }
 
-/**
- * PLCopen carries a library call's formal pin names but may not carry the
- * library's type signature. Recover ONLY well-known standard IEC functions
- * with a fixed, verified pin shape. Never synthesize an all-ANY result for
- * comparisons: LT/GT/etc. always return BOOL, independently of operand type.
- *
- * A generic SEL has a BOOL guard and a common ANY type shared by IN0,
- * IN1 and OUT. A concrete type must still be inferred by the caller; the
- * fail-closed temporary declaration check rejects ambiguous calls.
- */
+/** Restore a standard IEC signature only when the imported formal pin shape is exact. */
 function standardIecSignature(data: BlockData): BlockInfos | null {
   if (data.blockKind === 'function-block-instance') return null
   const name = data.typeName.toUpperCase()
-  const inputs = STANDARD_IEC_COMPARISONS.has(name) ? ['IN1', 'IN2'] : name === 'SEL' ? ['G', 'IN0', 'IN1'] : null
-  if (inputs === null) return null
-  // No guessing when an imported pin list is absent, shortened or extended.
-  if (data.inputs.length !== inputs.length || data.inputs.some((pin, i) => pin.toUpperCase() !== inputs[i])) return null
-  if (data.outputs.length !== 1 || data.outputs[0].toUpperCase() !== 'OUT') return null
+  const family = STANDARD_IEC_FAMILIES[name]
+  if (!family) return null
+
+  const actualInputs = data.inputs.filter((pin) => pin.toUpperCase() !== 'EN')
+  const actualOutputs = data.outputs.filter((pin) => pin.toUpperCase() !== 'ENO')
+  const inputs = family === 'comparison' ? ['IN1', 'IN2'] :
+    family === 'selection' ? ['G', 'IN0', 'IN1'] :
+    name === 'NOT' ? ['IN'] : actualInputs.map((pin) => pin.toUpperCase())
+  // AND/OR/XOR are extensible bit-string operators; an imported instance
+  // may expose IN1..INn, but never arbitrary or noncontiguous formals.
+  if (family === 'bitwise' && name !== 'NOT' &&
+      (inputs.length < 2 || inputs.length > 32 ||
+       inputs.some((pin, index) => pin !== `IN${index + 1}`))) return null
+  if (actualInputs.length !== inputs.length ||
+      actualInputs.some((pin, index) => pin.toUpperCase() !== inputs[index])) return null
+  if (actualOutputs.length !== 1 || actualOutputs[0].toUpperCase() !== 'OUT') return null
+
   const io = (pin: string, type: string) => ({ name: pin, type, qualifier: 'none' as const })
   return {
-    name: data.typeName,
-    type: 'function',
-    extensible: false,
-    inputs: STANDARD_IEC_COMPARISONS.has(name)
-      ? inputs.map((pin) => io(pin, 'ANY_ELEMENTARY'))
-      : [io('G', 'BOOL'), io('IN0', 'ANY'), io('IN1', 'ANY')],
-    outputs: [io('OUT', STANDARD_IEC_COMPARISONS.has(name) ? 'BOOL' : 'ANY')],
-    comment: '',
-    usage: '',
+    name: data.typeName, type: 'function', extensible: name !== 'NOT' && family === 'bitwise',
+    inputs: inputs.map((pin) => io(pin,
+      family === 'comparison' ? 'ANY_ELEMENTARY' :
+      family === 'selection' ? (pin === 'G' ? 'BOOL' : 'ANY') : 'ANY_BIT')),
+    outputs: [io('OUT', family === 'comparison' ? 'BOOL' :
+      family === 'bitwise' ? 'ANY_BIT' : 'ANY')],
+    comment: '', usage: '',
   }
 }
+
+/**
+ * Imported variants may be absent, name-only, or generic. Never overwrite
+ * explicit incompatible concrete types with an inferred standard signature.
+ */
+function validateStandardVariant(node: RFNode, data: BlockData, provided: BlockInfos | null, standard: BlockInfos): void {
+  if (provided === null) return
+  const name = data.typeName.toUpperCase()
+  const family = STANDARD_IEC_FAMILIES[name]
+  const get = (pins: BlockInfos['inputs'], name: string) => pins.find((pin) => pin.name === name)?.type.toUpperCase()
+  const output = get(provided.outputs, 'OUT')
+  if (family === 'comparison' && isConcrete(output) && output !== 'BOOL') {
+    throw new Error(`Invalid IEC signature for ${name} (block ${node.id}): OUT must be BOOL, got ${output}`)
+  }
+  if (family === 'selection') {
+    const guard = get(provided.inputs, 'G')
+    if (isConcrete(guard) && guard !== 'BOOL') {
+      throw new Error(`Invalid IEC signature for SEL (block ${node.id}): G must be BOOL, got ${guard}`)
+    }
+  }
+  if (family === 'bitwise') {
+    const types: string[] = []
+    for (const pin of standard.inputs) {
+      const type = get(provided.inputs, pin.name)
+      if (isConcrete(type)) types.push(type)
+    }
+    if (isConcrete(output)) types.push(output)
+    for (const type of types) {
+      if (!IEC_BIT_TYPES.has(type)) {
+        throw new Error(`Invalid IEC signature for ${name} (block ${node.id}): expected ANY_BIT, got ${type}`)
+      }
+    }
+    if (new Set(types).size > 1) {
+      throw new Error(`Invalid IEC signature for ${name} (block ${node.id}): bit-string pin types disagree`)
+    }
+  }
+}
+
 
 export function computeConnectionTypes(body: RFBody, ctx: TypeContext): Map<string, string> {
   const graph: Graph = { byId: new Map(), incoming: new Map() }
@@ -202,31 +257,24 @@ export function computeConnectionTypes(body: RFBody, ctx: TypeContext): Map<stri
           wired.every((name) => provided.inputs.some((formal) => formal.name === name)) &&
           outputs.every((name) => provided.outputs.some((formal) => formal.name === name))
         const standard = standardIecSignature(data)
-        // Retain complete, authoritative signatures. For imported standard
-        // functions, a missing signature or an ANY result on a comparison
-        // is recovered from IEC semantics rather than guessed from its inputs.
-        const unusableStandardResult =
-          standard !== null && provided !== null &&
-          outputs.some((name) => {
-            const formal = provided.outputs.find((item) => item.name === name)
-            return formal?.type.startsWith('ANY') === true
-          })
-        // Even an *incomplete* imported signature must not conceal a
-        // concrete contradiction. Recover absent/ANY comparison outputs,
-        // but never overwrite an explicitly declared non-BOOL result.
-        if (standard !== null && STANDARD_IEC_COMPARISONS.has(data.typeName.toUpperCase())) {
-          const result = provided?.outputs.find((formal) => formal.name === 'OUT')?.type
-          if (result !== undefined && !result.startsWith('ANY') && result !== 'BOOL') {
-            throw new Error(`Invalid IEC signature for ${data.typeName} (block ${node.id}): OUT must be BOOL, got ${result}`)
-          }
+        const family = STANDARD_IEC_FAMILIES[data.typeName.toUpperCase()]
+        // A known IEC function with a malformed pin shape must not fall back
+        // to homogeneous, permissive inference (especially for bitwise ops).
+        if (family && data.blockKind !== 'function-block-instance' && standard === null) {
+          throw new Error(`Missing typed IEC signature for ${data.typeName} (block ${node.id}): invalid standard IEC pin shape`)
         }
-        const infos = standard !== null && (!providedComplete || unusableStandardResult)
+        if (standard !== null) validateStandardVariant(node, data, provided, standard)
+        // For standardized operators, a generic or incomplete persisted
+        // signature cannot be trusted: use the shared IEC family contract.
+        const providedGeneric = standard !== null && provided !== null &&
+          [...provided.inputs, ...provided.outputs].some((formal) => formal.type.toUpperCase().startsWith('ANY'))
+        const infos = standard !== null && (!providedComplete || providedGeneric)
           ? standard : provided
         const complete =
           infos !== null &&
           wired.every((name) => infos.inputs.some((formal) => formal.name === name)) &&
           outputs.every((name) => infos.outputs.some((formal) => formal.name === name))
-        const homogeneous = new Set(['ADD', 'SUB', 'MUL', 'DIV', 'MOD', 'MIN', 'MAX', 'LIMIT', 'ABS', 'MOVE', 'NEG', 'AND', 'OR', 'XOR', 'NOT'])
+        const homogeneous = new Set(['ADD', 'SUB', 'MUL', 'DIV', 'MOD', 'MIN', 'MAX', 'LIMIT', 'ABS', 'MOVE', 'NEG'])
         const safeGeneric = homogeneous.has(data.typeName.toUpperCase())
         // Unrecognized mixed-type functions must retain a complete, typed
         // signature. Recognized IEC comparisons have a fixed BOOL result;
@@ -276,35 +324,74 @@ export function computeConnectionTypes(body: RFBody, ctx: TypeContext): Map<stri
     }
   }
 
-  // Imported IEC generic functions may carry a recovered signature rather
-  // than project-specific library types. Do not silently unify two different
-  // concrete operand types: that would hide a missing conversion.
-  for (const node of nodes) {
-    if (node.type !== 'block') continue
-    const data = asBlockData(node.data)
-    if (data === null || standardIecSignature(data) === null) continue
-    const name = data.typeName.toUpperCase()
-    if (name === 'SEL') {
-      const guard = sourcePin(graph, node.id, 'G')
-      const guardType = guard === null ? undefined : pt.types.get(guard)
-      if (guardType && !guardType.startsWith('ANY') && guardType !== 'BOOL') {
-        throw new Error(`Invalid IEC guard for SEL (block ${node.id}): G must be BOOL, got ${guardType}`)
+  // Validate the actual wired types, not only the possibly partial library
+  // variant. For bitwise ops every IN and OUT shares one concrete ANY_BIT
+  // type. SEL has a BOOL guard and one shared data type; comparisons have a
+  // BOOL result and compatible input operands.
+  const validateStandardWires = (): void => {
+    for (const node of nodes) {
+      if (node.type !== 'block') continue
+      const data = asBlockData(node.data)
+      if (data === null) continue
+      const standard = standardIecSignature(data)
+      if (standard === null) continue
+      const name = data.typeName.toUpperCase()
+      const family = STANDARD_IEC_FAMILIES[name]
+      const getType = (name: string): string | undefined => {
+        const source = sourcePin(graph, node.id, name)
+        return source === null ? pt.types.get(pinIn(node.id, name)) : pt.types.get(source)
+      }
+      if (family === 'selection') {
+        const guard = getType('G')
+        if (isConcrete(guard) && guard.toUpperCase() !== 'BOOL') {
+          throw new Error(`Invalid IEC guard for SEL (block ${node.id}): G must be BOOL, got ${guard}`)
+        }
+      }
+      const pins = standard.inputs.filter((pin) => pin.name !== 'G').map((pin) => pin.name)
+      const types = new Set<string>()
+      for (const pin of pins) {
+        const type = getType(pin)
+        if (isConcrete(type)) types.add(normalizeType(type))
+      }
+      const outType = pt.types.get(pinOut(node.id, 'OUT'))
+      if (family !== 'comparison' && isConcrete(outType)) types.add(normalizeType(outType))
+
+      // A completely typed imported/library variant is authoritative, but
+      // computeBlockInputTypes does not overwrite pre-existing wire types.
+      // Therefore compare *each* concrete formal with the final connected
+      // type; checking only the resulting homogeneous wire group would let
+      // a stale BOOL signature silently compile against a WORD/REAL wire.
+      const provided = ctx.resolveBlock(data.typeName)
+      if (provided !== null) {
+        for (const formal of [...provided.inputs, ...provided.outputs]) {
+          if (!isConcrete(formal.type)) continue
+          const pinType = provided.inputs.includes(formal)
+            ? getType(formal.name)
+            : pt.types.get(pinOut(node.id, formal.name))
+          if (isConcrete(pinType) && normalizeType(pinType) !== normalizeType(formal.type)) {
+            throw new Error(
+              `IEC signature/wire type mismatch for ${name} (block ${node.id}), ` +
+              `${formal.name}: declared ${formal.type}, connected ${pinType}`,
+            )
+          }
+        }
+      }
+      if (family === 'bitwise') {
+        for (const type of types) {
+          if (!IEC_BIT_TYPES.has(type)) {
+            throw new Error(`Invalid IEC operand type for ${name} (block ${node.id}): expected ANY_BIT, got ${type}`)
+          }
+        }
+      }
+      if (types.size > 1) {
+        throw new Error(`Conflicting IEC operand types for ${name} (block ${node.id}): ${[...types].join(', ')}; insert an explicit conversion before compiling`)
+      }
+      if (family === 'comparison' && isConcrete(outType) && normalizeType(outType) !== 'BOOL') {
+        throw new Error(`Invalid IEC result type for ${name} (block ${node.id}): OUT must be BOOL, got ${outType}`)
       }
     }
-    const pins = name === 'SEL' ? ['IN0', 'IN1', 'OUT'] : ['IN1', 'IN2']
-    const types = new Set<string>()
-    for (const pin of pins) {
-      const key = pin === 'OUT' ? pinOut(node.id, pin) : sourcePin(graph, node.id, pin)
-      const type = key === null ? undefined : pt.types.get(key)
-      if (type && !type.startsWith('ANY')) types.add(type)
-    }
-    if (types.size > 1) {
-      throw new Error(
-        `Conflicting IEC operand types for ${data.typeName} (block ${node.id}): ${[...types].join(', ')}; ` +
-          'insert an explicit conversion before compiling',
-      )
-    }
   }
+  validateStandardWires()
 
   for (const { node, data } of deferred) {
     // Detect conflicting concrete types rather than depending on whichever
@@ -329,6 +416,7 @@ export function computeConnectionTypes(body: RFBody, ctx: TypeContext): Map<stri
     computeBlockInputTypes(graph, pt, node, data, infos)
   }
 
+  validateStandardWires()
   return pt.types
 }
 

@@ -176,6 +176,35 @@ export function asParallelData(data: Record<string, unknown>): ParallelData | nu
   return { side: t }
 }
 
+/**
+ * PLCopen pin handles and a partially restored library variant can arrive in
+ * different orders. Standard IEC function calls are emitted positionally, so
+ * their formal argument order MUST be canonical even when the input set was
+ * assembled from those two sources. Do not reorder custom/library FB pins.
+ */
+function canonicalStandardFunctionInputs(typeName: string, inputs: string[]): string[] {
+  const name = typeName.toUpperCase()
+  const comparison = ['EQ', 'NE', 'GT', 'GE', 'LT', 'LE']
+  let expected: string[] | null = null
+  if (comparison.includes(name)) expected = ['IN1', 'IN2']
+  else if (name === 'SEL') expected = ['G', 'IN0', 'IN1']
+  else if (name === 'NOT') expected = ['IN']
+  else if (['AND', 'OR', 'XOR'].includes(name)) {
+    const candidates = inputs.filter((pin) => pin.toUpperCase() !== 'EN')
+    if (candidates.length >= 2 && candidates.length <= 32) {
+      expected = candidates.map((_, index) => `IN${index + 1}`)
+    }
+  }
+  if (expected === null) return inputs
+  const en = inputs.filter((pin) => pin.toUpperCase() === 'EN')
+  const formals = inputs.filter((pin) => pin.toUpperCase() !== 'EN')
+  if (formals.length !== expected.length ||
+      expected.some((name) => formals.filter((pin) => pin.toUpperCase() === name).length !== 1)) {
+    return inputs // Leave malformed shapes visible for fail-closed validation.
+  }
+  return [...en, ...expected.map((name) => formals.find((pin) => pin.toUpperCase() === name)!)]
+}
+
 export function asBlockData(data: Record<string, unknown>): BlockData | null {
   const variant = data['variant']
   if (!isObject(variant)) return null
@@ -247,7 +276,7 @@ export function asBlockData(data: Record<string, unknown>): BlockData | null {
     executionOrder: asNumber(data['executionOrder']) ?? 0,
     executionControl: asBoolean(data['executionControl']),
     extensible: asBoolean(variant['extensible']),
-    inputs,
+    inputs: blockKind === 'function' ? canonicalStandardFunctionInputs(typeName, inputs) : inputs,
     outputs,
   }
 }
